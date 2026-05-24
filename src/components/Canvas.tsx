@@ -1,0 +1,1529 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  WorkflowNode, 
+  NodeLink, 
+  NodeType, 
+  NodeStatus 
+} from '../types';
+import { 
+  Plus, 
+  ZoomIn, 
+  ZoomOut, 
+  Maximize2, 
+  RotateCcw, 
+  Trash2, 
+  Link2, 
+  ExternalLink,
+  Layers,
+  Sparkles,
+  HelpCircle,
+  Code,
+  FileText,
+  Video,
+  MousePointer,
+  CheckCircle2,
+  AlertTriangle,
+  Archive,
+  Star,
+  Type,
+  Paperclip,
+  CheckSquare,
+  Mic,
+  X,
+  Undo,
+  Redo,
+  Grid
+} from 'lucide-react';
+
+interface CanvasProps {
+  nodes: WorkflowNode[];
+  links: NodeLink[];
+  selectedNodeId: string | null;
+  onSelectNode: (nodeId: string | null) => void;
+  onUpdateNodePosition: (nodeId: string, x: number, y: number) => void;
+  onNodeDragStart?: () => void;
+  onAddNode: (type: NodeType, x: number, y: number, initialFields?: Partial<WorkflowNode>) => string;
+  onDeleteNode: (nodeId: string) => void;
+  onAddLink: (fromId: string, toId: string) => void;
+  onDeleteLink: (linkId: string) => void;
+  onUpdateNode: (nodeId: string, updatedFields: Partial<WorkflowNode>) => void;
+  searchQuery: string;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export default function Canvas({
+  nodes,
+  links,
+  selectedNodeId,
+  onSelectNode,
+  onUpdateNodePosition,
+  onNodeDragStart,
+  onAddNode,
+  onDeleteNode,
+  onAddLink,
+  onDeleteLink,
+  onUpdateNode,
+  searchQuery,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
+}: CanvasProps) {
+  // Navigation: Panning and Zooming
+  const [pan, setPan] = useState({ x: 50, y: 50 });
+  const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [originPan, setOriginPan] = useState({ x: 0, y: 0 });
+
+  // Full-screen image preview lightbox
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewImageTitle, setPreviewImageTitle] = useState<string>('');
+
+  // Expandable text note reader / editor notepad modal
+  const [activeExpandedNode, setActiveExpandedNode] = useState<WorkflowNode | null>(null);
+
+  // Node Dragging State
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [dragStartOffset, setDragStartOffset] = useState({ x: 0, y: 0 });
+
+  // Alignment guides state for smart alignment
+  const [alignGuidesX, setAlignGuidesX] = useState<number[]>([]);
+  const [alignGuidesY, setAlignGuidesY] = useState<number[]>([]);
+
+  // Snap to grid setting for precision node alignment
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(() => {
+    const saved = localStorage.getItem('canvas_snap_to_grid');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('canvas_snap_to_grid', String(snapToGrid));
+  }, [snapToGrid]);
+
+  // Node Linking State
+  const [linkingSourceId, setLinkingSourceId] = useState<string | null>(null);
+
+  // Filter local state
+  const [filterType, setFilterType] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Clean linking source if node gets deleted or deselected
+  useEffect(() => {
+    if (linkingSourceId && !nodes.some(n => n.id === linkingSourceId)) {
+      setLinkingSourceId(null);
+    }
+  }, [nodes, linkingSourceId]);
+
+  // Track cursor position to spawn pasted nodes directly under the mouse pointer
+  const mouseClientPosRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+
+  useEffect(() => {
+    const trackMouse = (e: MouseEvent) => {
+      mouseClientPosRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('mousemove', trackMouse);
+    return () => {
+      window.removeEventListener('mousemove', trackMouse);
+    };
+  }, []);
+
+  // Internal visual clipboard node representation for iframe-friendly local backup
+  const localCopiedNodeRef = useRef<WorkflowNode | null>(null);
+
+  // Safely avoid capturing canvas shortcuts when the user is editing data inside fields or inputs
+  const isInputActive = () => {
+    const activeEl = document.activeElement;
+    if (!activeEl) return false;
+    const tagName = activeEl.tagName.toLowerCase();
+    return tagName === 'input' || tagName === 'textarea' || activeEl.hasAttribute('contenteditable');
+  };
+
+  // Helper to extract clean titles for pasted or dropped video URLs
+  const extractVideoTitle = (url: string): string => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes('youtube.com') || parsed.hostname.includes('youtu.be')) {
+        let videoId = '';
+        if (parsed.hostname.includes('youtu.be')) {
+          videoId = parsed.pathname.slice(1);
+        } else {
+          videoId = parsed.searchParams.get('v') || '';
+        }
+        if (videoId) {
+          return `YouTube Video [${videoId}]`;
+        }
+        return 'YouTube Video Reference';
+      }
+      if (parsed.hostname.includes('vimeo.com')) {
+        const segment = parsed.pathname.split('/').pop();
+        if (segment) return `Vimeo Video [${segment}]`;
+        return 'Vimeo Video Reference';
+      }
+      const fileName = parsed.pathname.split('/').pop();
+      if (fileName) {
+        return `Video: ${decodeURIComponent(fileName)}`;
+      }
+    } catch (_) {}
+    return 'Pasted Video Link';
+  };
+
+  // Central intelligent parser for pasted text
+  const handlePastedText = (text: string, spawnX: number, spawnY: number) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // A. Check if copied text represents our serialized workflow-brain JSON format
+    try {
+      if (trimmed.startsWith('{') && trimmed.includes('"type"') && trimmed.includes('"workflow-brain-copied-node"')) {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && parsed.node) {
+          const cNode = parsed.node;
+          onAddNode(cNode.type, spawnX, spawnY, {
+            title: `${cNode.title} (Copy)`,
+            content: cNode.content,
+            summary: cNode.summary,
+            sourceUrl: cNode.sourceUrl,
+            sourceTitle: cNode.sourceTitle,
+            confidenceScore: cNode.confidenceScore,
+            rating: cNode.rating,
+            status: cNode.status,
+            tags: [...(cNode.tags || [])]
+          });
+          return;
+        }
+      }
+    } catch (_) {
+      // Not JSON, continue to regex format analyzer
+    }
+
+    // B. Analyze text to auto-classify card classifications
+    
+    // 1. Image reference auto-detection
+    const isImage = /\.(jpeg|jpg|gif|png|webp|svg)$/i.test(trimmed) || trimmed.startsWith('data:image/');
+    if (isImage) {
+      onAddNode('image', spawnX, spawnY, {
+        title: 'Pasted Image Reference',
+        content: trimmed,
+        summary: 'Pasted custom image source locator.',
+        tags: ['pasted', 'image']
+      });
+      return;
+    }
+
+    // 2. Video frame auto-detection
+    const isVideo = /youtube\.com|youtu\.be|vimeo\.com|twitch\.tv|\.(mp4|webm|mov|avi)$/i.test(trimmed);
+    if (isVideo) {
+      const vTitle = extractVideoTitle(trimmed);
+      onAddNode('video', spawnX, spawnY, {
+        title: vTitle,
+        content: trimmed,
+        sourceUrl: trimmed,
+        sourceTitle: 'Video Url Source',
+        summary: 'Pasted external video player web source.',
+        tags: ['pasted', 'video']
+      });
+      return;
+    }
+
+    // 3. Web URL Link auto-detection
+    const isUrl = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([/\w .-]*)*\/?$/i.test(trimmed) || trimmed.startsWith('http://') || trimmed.startsWith('https://');
+    if (isUrl) {
+      let absoluteUrl = trimmed;
+      if (!/^https?:\/\//i.test(trimmed)) {
+        absoluteUrl = 'https://' + trimmed;
+      }
+      let domain = 'Link';
+      try {
+        const parsedUrl = new URL(absoluteUrl);
+        domain = parsedUrl.hostname.replace('www.', '');
+      } catch (_) {}
+
+      onAddNode('link', spawnX, spawnY, {
+        title: `Link: ${domain}`,
+        content: `Pasted reference web connection resource.`,
+        sourceUrl: absoluteUrl,
+        sourceTitle: domain,
+        tags: ['pasted', 'web-link']
+      });
+      return;
+    }
+
+    // 4. Code / Tool command/terminal auto-detection
+    const isCode = trimmed.startsWith('```') || 
+                   trimmed.includes('const ') || 
+                   trimmed.includes('let ') || 
+                   trimmed.includes('function ') || 
+                   trimmed.includes('import ') || 
+                   trimmed.startsWith('$ ') || 
+                   trimmed.startsWith('npm ') || 
+                   trimmed.includes('curl ') ||
+                   (trimmed.includes('{') && trimmed.includes('}'));
+    if (isCode) {
+      const codeCleaned = trimmed.replace(/^```[a-zA-Z]*\n/, '').replace(/\n```$/, '');
+      onAddNode('tool', spawnX, spawnY, {
+        title: 'Pasted Code Snippet',
+        content: codeCleaned,
+        summary: 'Pasted developer command or engineering code context block.',
+        tags: ['pasted', 'code']
+      });
+      return;
+    }
+
+    // 5. Question/Note advice auto-detection
+    const isQuestion = trimmed.endsWith('?') || 
+                       /^(how|what|why|who|where|when|can|should|is|are)\s/i.test(trimmed) || 
+                       trimmed.length < 120;
+    if (isQuestion) {
+      onAddNode('note', spawnX, spawnY, {
+        title: trimmed.length < 35 ? trimmed : (trimmed.substring(0, 32) + '...'),
+        content: trimmed,
+        summary: 'Pasted task advice notes or question prompt card.',
+        tags: ['pasted', 'note']
+      });
+      return;
+    }
+
+    // 6. Generic fallback -> Step Card
+    onAddNode('step', spawnX, spawnY, {
+      title: trimmed.length < 30 ? trimmed : (trimmed.substring(0, 27) + '...'),
+      content: trimmed,
+      summary: 'Automatically created text step based on clipboard input.',
+      tags: ['pasted', 'step']
+    });
+  };
+
+  // Drag and drop handler for files or URL text from desktop
+  const handleDropFile = (e: React.DragEvent) => {
+    e.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const spawnX = Math.round((mouseX - pan.x) / zoom - 100);
+    const spawnY = Math.round((mouseY - pan.y) / zoom - 60);
+
+    // If text/URLs are dropped (like a drag-and-drop link or YouTube URL from another tab)
+    const textData = e.dataTransfer.getData('text');
+    if (textData) {
+      handlePastedText(textData, spawnX, spawnY);
+      return;
+    }
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      const isImgFile = file.type.startsWith('image/');
+      const isVideoFile = file.type.startsWith('video/');
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const type: NodeType = isImgFile ? 'image' : (isVideoFile ? 'video' : 'step');
+          onAddNode(type, spawnX, spawnY, {
+            title: file.name,
+            content: event.target.result as string,
+            sourceUrl: isVideoFile ? (event.target.result as string) : undefined,
+            summary: `Dropped desktop ${file.type || 'file'}: ${file.name}.`,
+            tags: ['desktop-dropped']
+          });
+        }
+      };
+      
+      if (isImgFile || isVideoFile) {
+        reader.readAsDataURL(file);
+      } else {
+        reader.readAsText(file);
+      }
+    }
+  };
+
+  // Register native OS copy-paste event intercepts
+  useEffect(() => {
+    const handleGlobalCopy = (e: ClipboardEvent) => {
+      if (isInputActive()) return;
+      if (!selectedNodeId) return;
+
+      const activeNode = nodes.find(n => n.id === selectedNodeId);
+      if (!activeNode) return;
+
+      const serialized = {
+        type: 'workflow-brain-copied-node',
+        node: activeNode
+      };
+
+      localCopiedNodeRef.current = activeNode;
+
+      if (e.clipboardData) {
+        e.clipboardData.setData('text/plain', JSON.stringify(serialized));
+        e.preventDefault();
+      }
+    };
+
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (isInputActive()) return;
+
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const mouseX = mouseClientPosRef.current.x - rect.left;
+      const mouseY = mouseClientPosRef.current.y - rect.top;
+
+      const isInsideCanvas = mouseX >= 0 && mouseX <= rect.width && mouseY >= 0 && mouseY <= rect.height;
+
+      const spawnX = isInsideCanvas 
+        ? Math.round((mouseX - pan.x) / zoom - 100)
+        : Math.round((rect.width / 2 - pan.x) / zoom - 100);
+      const spawnY = isInsideCanvas 
+        ? Math.round((mouseY - pan.y) / zoom - 60)
+        : Math.round((rect.height / 2 - pan.y) / zoom - 60);
+
+      // Check for file clipboard transfers (images, screenshots, notes files)
+      if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+        const file = e.clipboardData.files[0];
+        const isImgFile = file.type.startsWith('image/');
+        const isVideoFile = file.type.startsWith('video/');
+        
+        e.preventDefault();
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (event.target?.result) {
+            const nodeType: NodeType = isImgFile ? 'image' : (isVideoFile ? 'video' : 'step');
+            onAddNode(nodeType, spawnX, spawnY, {
+              title: file.name,
+              content: event.target.result as string,
+              sourceUrl: isVideoFile ? (event.target.result as string) : undefined,
+              summary: `Pasted data file: ${file.name}.`,
+              tags: ['pasted-file']
+            });
+          }
+        };
+        if (isImgFile || isVideoFile) {
+          reader.readAsDataURL(file);
+        } else {
+          reader.readAsText(file);
+        }
+        return;
+      }
+
+      // Clipboard fallback items list (e.g. Win + Shift + S screenshots)
+      if (e.clipboardData && e.clipboardData.items) {
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf('image') !== -1) {
+            const file = items[i].getAsFile();
+            if (file) {
+              e.preventDefault();
+              const reader = new FileReader();
+              reader.onload = (event) => {
+                if (event.target?.result) {
+                  onAddNode('image', spawnX, spawnY, {
+                    title: 'Pasted Clipboard Image',
+                    content: event.target.result as string,
+                    summary: 'Pasted machine clipboard image.',
+                    tags: ['pasted-image']
+                  });
+                }
+              };
+              reader.readAsDataURL(file);
+              return;
+            }
+          }
+        }
+      }
+
+      // Attempt standard OS transfer parsing
+      if (e.clipboardData) {
+        const text = e.clipboardData.getData('text');
+        if (text) {
+          e.preventDefault();
+          handlePastedText(text, spawnX, spawnY);
+          return;
+        }
+      }
+
+      // Local container fallback mechanism for extra robustness inside isolated iframes
+      if (localCopiedNodeRef.current) {
+        const cNode = localCopiedNodeRef.current;
+        onAddNode(cNode.type, spawnX, spawnY, {
+          title: `${cNode.title} (Copy)`,
+          content: cNode.content,
+          summary: cNode.summary,
+          sourceUrl: cNode.sourceUrl,
+          sourceTitle: cNode.sourceTitle,
+          confidenceScore: cNode.confidenceScore,
+          rating: cNode.rating,
+          status: cNode.status,
+          tags: [...(cNode.tags || [])]
+        });
+      }
+    };
+
+    document.addEventListener('copy', handleGlobalCopy);
+    document.addEventListener('paste', handleGlobalPaste);
+
+    return () => {
+      document.removeEventListener('copy', handleGlobalCopy);
+      document.removeEventListener('paste', handleGlobalPaste);
+    };
+  }, [selectedNodeId, nodes, pan, zoom]);
+
+  // Zoom with scroll wheel
+  useEffect(() => {
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
+
+    const handleRawWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.closest('#notepad-expanded-overlay') || target.closest('#image-lightbox-overlay'))) {
+        return; // Allow standard scroll behavior within modals
+      }
+
+      e.preventDefault();
+      const rect = canvasEl.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const beforeZoomX = (mouseX - pan.x) / zoom;
+      const beforeZoomY = (mouseY - pan.y) / zoom;
+
+      const zoomFactor = 1.05;
+      let nextZoom = zoom;
+      if (e.deltaY < 0) {
+        nextZoom = Math.min(2, zoom * zoomFactor);
+      } else {
+        nextZoom = Math.max(0.4, zoom / zoomFactor);
+      }
+
+      const nextPanX = mouseX - beforeZoomX * nextZoom;
+      const nextPanY = mouseY - beforeZoomY * nextZoom;
+
+      setZoom(nextZoom);
+      setPan({ x: nextPanX, y: nextPanY });
+    };
+
+    canvasEl.addEventListener('wheel', handleRawWheel, { passive: false });
+    return () => {
+      canvasEl.removeEventListener('wheel', handleRawWheel);
+    };
+  }, [zoom, pan]);
+
+  // Global Workspace Keyboard Shortcuts (Undo, Redo, Delete selected node)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputActive()) return;
+
+      const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.userAgent || '');
+      const isCmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) {
+          e.preventDefault();
+          onRedo();
+        } else {
+          e.preventDefault();
+          onUndo();
+        }
+      } else if (isCmdOrCtrl && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        onRedo();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedNodeId) {
+          e.preventDefault();
+          onDeleteNode(selectedNodeId);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedNodeId, onUndo, onRedo, onDeleteNode]);
+
+  // Handle Dragging / Panning on Mouse Move
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (draggingNodeId) {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      
+      // Calculate cursor position in coordinates mapped to the workspace scale/pan
+      const currX = (e.clientX - rect.left - pan.x) / zoom;
+      const currY = (e.clientY - rect.top - pan.y) / zoom;
+
+      let targetX = Math.round(currX - dragStartOffset.x);
+      let targetY = Math.round(currY - dragStartOffset.y);
+
+      if (snapToGrid) {
+        targetX = Math.round(targetX / 24) * 24;
+        targetY = Math.round(targetY / 24) * 24;
+      }
+
+      // Keep nodes within bounds
+      onUpdateNodePosition(draggingNodeId, Math.max(-500, Math.min(2500, targetX)), Math.max(-500, Math.min(2000, targetY)));
+    } else if (isPanning) {
+      const dx = e.clientX - panStart.x;
+      const dy = e.clientY - panStart.y;
+      setPan({
+        x: originPan.x + dx,
+        y: originPan.y + dy
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (draggingNodeId) {
+      setDraggingNodeId(null);
+    }
+    if (isPanning) {
+      setIsPanning(false);
+    }
+  };
+
+  // Click handler on Canvas background
+  const handleMouseDownOnBackground = (e: React.MouseEvent) => {
+    // If clicking a selection or button, don't trigger canvas panning
+    if ((e.target as HTMLElement).closest('.canvas-node') || (e.target as HTMLElement).closest('.canvas-controls')) {
+      return;
+    }
+    setIsPanning(true);
+    setPanStart({ x: e.clientX, y: e.clientY });
+    setOriginPan({ x: pan.x, y: pan.y });
+    onSelectNode(null); // Deselect current node
+  };
+
+  // Double click canvas to spawn a node
+  const handleDoubleClickBackground = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.canvas-node') || (e.target as HTMLElement).closest('.canvas-controls')) {
+      return;
+    }
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const spawnX = Math.round((e.clientX - rect.left - pan.x) / zoom - 100);
+    const spawnY = Math.round((e.clientY - rect.top - pan.y) / zoom - 40);
+    
+    // Default to a 'step' on double click
+    onAddNode('step', spawnX, spawnY);
+  };
+
+  // Node Drag Trigger
+  const handleNodeDragStart = (e: React.MouseEvent, node: WorkflowNode) => {
+    e.stopPropagation();
+    if (linkingSourceId) {
+      // If we clicked A then B in connecting mode, tie them together
+      if (linkingSourceId !== node.id) {
+        onAddLink(linkingSourceId, node.id);
+      }
+      setLinkingSourceId(null);
+      return;
+    }
+
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    
+    // Coordinates inside workspace grid
+    const zoomCursorX = (e.clientX - rect.left - pan.x) / zoom;
+    const zoomCursorY = (e.clientY - rect.top - pan.y) / zoom;
+
+    setDraggingNodeId(node.id);
+    setDragStartOffset({
+      x: zoomCursorX - node.positionX,
+      y: zoomCursorY - node.positionY
+    });
+    onSelectNode(node.id);
+    if (onNodeDragStart) {
+      onNodeDragStart();
+    }
+  };
+
+  // Zoom control utils
+  const zoomIn = () => setZoom(prev => Math.min(2, prev + 0.1));
+  const zoomOut = () => setZoom(prev => Math.max(0.4, prev - 0.1));
+  const resetZoomPan = () => {
+    setZoom(1);
+    setPan({ x: 50, y: 50 });
+  };
+  const fitAllIntoView = () => {
+    if (nodes.length === 0) {
+      resetZoomPan();
+      return;
+    }
+    const paddingX = 80;
+    const paddingY = 80;
+    const minX = Math.min(...nodes.map(n => n.positionX));
+    const maxX = Math.max(...nodes.map(n => n.positionX + 260));
+    const minY = Math.min(...nodes.map(n => n.positionY));
+    const maxY = Math.max(...nodes.map(n => n.positionY + 160));
+    
+    if (canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const contentW = maxX - minX + paddingX * 2;
+      const contentH = maxY - minY + paddingY * 2;
+      
+      const nextZoom = Math.max(0.4, Math.min(1.5, Math.min(rect.width / contentW, rect.height / contentH)));
+      const nextPanX = rect.width / 2 - (minX + (maxX - minX) / 2) * nextZoom;
+      const nextPanY = rect.height / 2 - (minY + (maxY - minY) / 2) * nextZoom;
+      
+      setZoom(nextZoom);
+      setPan({ x: nextPanX, y: nextPanY });
+    }
+  };
+
+  // Node categorization icons
+  const getNodeIcon = (type: NodeType) => {
+    switch(type) {
+      case 'step': return <FileText className="w-4 h-4 text-blue-600" id={`icon-step`} />;
+      case 'note': return <HelpCircle className="w-4 h-4 text-emerald-600" id={`icon-note`} />;
+      case 'link': return <Link2 className="w-4 h-4 text-indigo-600" id={`icon-link`} />;
+      case 'image': return <Plus className="w-4 h-4 text-amber-500 rotate-45" id={`icon-image`} />;
+      case 'video': return <Video className="w-4 h-4 text-rose-500" id={`icon-video`} />;
+      case 'tool': return <Code className="w-4 h-4 text-purple-600" id={`icon-tool`} />;
+      default: return <FileText className="w-4 h-4 text-slate-500" id={`icon-default`} />;
+    }
+  };
+
+  // Node status labels and styles
+  const getStatusBadge = (status: NodeStatus) => {
+    switch (status) {
+      case 'trusted':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-500 px-1.5 py-0.5 rounded" id={`badge-trusted`}>
+            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+            trusted
+          </span>
+        );
+      case 'experimental':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-blue-700 bg-blue-50 border border-blue-500 px-1.5 py-0.5 rounded" id={`badge-experimental`}>
+            <Sparkles className="w-2.5 h-2.5 text-blue-500 animate-pulse" />
+            experimental
+          </span>
+        );
+      case 'archived':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-slate-600 bg-slate-100 border border-slate-400 px-1.5 py-0.5 rounded" id={`badge-archived`}>
+            <Archive className="w-2.5 h-2.5 text-slate-500" />
+            archived
+          </span>
+        );
+    }
+  };
+
+  // Filters logic
+  const filteredNodes = nodes.filter(node => {
+    // Type Filter
+    if (filterType !== 'all' && node.type !== filterType) return false;
+    // Status Filter
+    if (filterStatus !== 'all' && node.status !== filterStatus) return false;
+    // Search Query
+    if (searchQuery.trim() !== '') {
+      const q = searchQuery.toLowerCase();
+      const matchTitle = node.title.toLowerCase().includes(q);
+      const matchContent = node.content.toLowerCase().includes(q);
+      const matchTags = node.tags.some(tag => tag.toLowerCase().includes(q));
+      if (!matchTitle && !matchContent && !matchTags) return false;
+    }
+    return true;
+  });
+
+  // Hotspot anchor points for connections (width node: 240, height node: variable offset)
+  const getNodePorts = (node: WorkflowNode) => {
+    return {
+      left: { x: node.positionX, y: node.positionY + 68 },
+      right: { x: node.positionX + 246, y: node.positionY + 68 }
+    };
+  };
+
+  return (
+    <div className="flex-1 w-full h-full bg-[#f3f4f6] overflow-hidden relative select-none" id="canvas-container-root">
+      
+      {/* Floating Filters Card - Top Right of Canvas */}
+      <div className="absolute top-4 right-4 bg-white border-2 border-black p-1.5 rounded-lg shadow-[3px_3px_0px_rgba(0,0,0,1)] z-30 flex items-center gap-2 px-3 canvas-controls select-none" id="canvas-floating-filters">
+        <span className="text-[10px] font-mono text-slate-500 flex items-center gap-1 font-bold uppercase">
+          <Layers className="w-3.5 h-3.5 text-blue-600" /> Filters:
+        </span>
+        
+        <select 
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          className="bg-slate-50 border border-slate-300 text-slate-800 font-bold text-[10px] rounded px-1 px-1.5 outline-none cursor-pointer"
+          id="filter-type-select"
+        >
+          <option value="all">All Types</option>
+          <option value="step">Step</option>
+          <option value="note">Note</option>
+          <option value="link">Link</option>
+          <option value="image">Image</option>
+          <option value="video">Video</option>
+          <option value="tool">Tool</option>
+        </select>
+
+        <select 
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="bg-slate-50 border border-slate-300 text-slate-800 font-bold text-[10px] rounded px-1 px-1.5 outline-none cursor-pointer"
+          id="filter-status-select"
+        >
+          <option value="all">All Status</option>
+          <option value="trusted">Trusted Only</option>
+          <option value="experimental">Experimental Only</option>
+          <option value="archived">Archived Only</option>
+        </select>
+
+        <div className="text-[10px] font-mono font-bold text-slate-500 border-l border-slate-200 pl-2">
+          <span className="text-black font-extrabold">{filteredNodes.length}</span>/{nodes.length} nodes
+        </div>
+      </div>
+
+      {/* Connection Tool Floating Reminder */}
+      {linkingSourceId && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-purple-105 border-2 border-black text-purple-900 font-bold rounded-lg py-1 px-3 text-xs shadow-[3px_3px_0px_#000] z-35 animate-bounce" id="active-connection-prompt">
+          <Link2 className="w-3.5 h-3.5 text-purple-600" />
+          <span>Tap target node to connect...</span>
+          <button 
+            onClick={() => setLinkingSourceId(null)} 
+            className="text-purple-700 hover:text-purple-900 underline ml-1 cursor-pointer font-black"
+            id="cancel-connection-btn"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Main Interactive Canvas Stage */}
+      <div 
+        ref={canvasRef}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseDown={handleMouseDownOnBackground}
+        onDoubleClick={handleDoubleClickBackground}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDropFile}
+        className="w-full h-full relative overflow-hidden select-none canvas-bg cursor-grab active:cursor-grabbing bg-slate-50"
+        id="interactive-canvas-screen"
+      >
+        {/* Navigation / Control Panel Overlays - Bottom Left */}
+        <div className="absolute bottom-6 left-6 flex items-center gap-1.5 bg-white border-2 border-black p-1.5 rounded-lg shadow-[3px_3px_0px_rgba(0,0,0,1)] z-30 canvas-controls" id="canvas-zoom-controls">
+          <button 
+            type="button"
+            onClick={zoomIn} 
+            className="p-1 px-2.5 text-xs bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center transition-all h-8 shadow-[1px_1px_0px_#000] active:translate-y-[1px]"
+            title="Increase Zoom"
+            id="zoom-in-control"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          
+          <div className="px-2 text-xs font-mono text-black font-black w-14 text-center select-none" id="zoom-value-display">
+            {Math.round(zoom * 100)}%
+          </div>
+          
+          <button 
+            type="button"
+            onClick={zoomOut} 
+            className="p-1 px-2.5 text-xs bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center transition-all h-8 shadow-[1px_1px_0px_#000] active:translate-y-[1px]"
+            title="Decrease Zoom"
+            id="zoom-out-control"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          
+          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+          
+          <button 
+            type="button"
+            onClick={fitAllIntoView} 
+            className="p-1.5 bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center gap-1 shadow-[1px_1px_0px_#000] active:translate-y-[1px] transition-all"
+            title="Fit Workspace"
+            id="fit-all-control"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-mono font-bold hidden md:inline">Fit All</span>
+          </button>
+          
+          <button 
+            type="button"
+            onClick={resetZoomPan} 
+            className="p-1.5 bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center gap-1 shadow-[1px_1px_0px_#000] active:translate-y-[1px] transition-all"
+            title="Reset Scope"
+            id="reset-canvas-control"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+
+          <button 
+            type="button"
+            onClick={() => setSnapToGrid(prev => !prev)} 
+            className={`p-1.5 border-2 rounded-lg flex items-center gap-1 transition-all h-8 ${
+              snapToGrid 
+                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-600 shadow-[1px_1px_0px_#2563eb] active:translate-y-[1px] cursor-pointer' 
+                : 'bg-white hover:bg-slate-50 text-black border-black shadow-[1px_1px_0px_#000] active:translate-y-[1px] cursor-pointer'
+            }`}
+            title={snapToGrid ? "Snap to Grid Enabled (24px)" : "Snap to Grid Disabled"}
+            id="snap-grid-canvas-control"
+          >
+            <Grid className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-mono font-bold hidden md:inline">Snap</span>
+          </button>
+
+          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+
+          <button 
+            type="button"
+            onClick={onUndo} 
+            disabled={!canUndo}
+            className={`p-1.5 border-2 border-black rounded-lg flex items-center gap-1 transition-all h-8 ${
+              canUndo 
+                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_#000] active:translate-y-[1px]' 
+                : 'bg-slate-100 text-slate-350 cursor-not-allowed opacity-50'
+            }`}
+            title="Undo (Ctrl+Z)"
+            id="undo-canvas-control"
+          >
+            <Undo className="w-3.5 h-3.5" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={onRedo} 
+            disabled={!canRedo}
+            className={`p-1.5 border-2 border-black rounded-lg flex items-center gap-1 transition-all h-8 ${
+              canRedo 
+                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_#000] active:translate-y-[1px]' 
+                : 'bg-slate-100 text-slate-350 cursor-not-allowed opacity-50'
+            }`}
+            title="Redo (Ctrl+Y)"
+            id="redo-canvas-control"
+          >
+            <Redo className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Dynamic Whiteboard Bottom Floating Toolbar (Miro/Weje style) */}
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white border-2 border-black p-1.5 rounded-full shadow-[4px_4px_0px_rgba(0,0,0,1)] z-30 flex items-center gap-1" id="canvas-bottom-floating-toolbar">
+          <span className="text-[9px] font-mono text-slate-400 pl-3 uppercase tracking-wider font-extrabold select-none pr-1">Tools:</span>
+          
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('step', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors"
+            title="Add Step Card [FileText]"
+            id="add-node-step-toolbar"
+          >
+            <FileText className="w-4 h-4 text-blue-600" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('note', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors"
+            title="Add Note Card [HelpCircle]"
+            id="add-node-note-toolbar"
+          >
+            <HelpCircle className="w-4 h-4 text-emerald-600" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('link', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors"
+            title="Add URL Link [Link2]"
+            id="add-node-link-toolbar"
+          >
+            <Link2 className="w-4 h-4 text-indigo-650" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('image', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors"
+            title="Add Image Reference [Plus]"
+            id="add-node-image-toolbar"
+          >
+            <Plus className="w-4 h-4 text-amber-500 rotate-45" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('video', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors"
+            title="Add Video Frame [Video]"
+            id="add-node-video-toolbar"
+          >
+            <Video className="w-4 h-4 text-rose-500" />
+          </button>
+
+          <button 
+            type="button"
+            onClick={() => {
+              if (canvasRef.current) {
+                const r = canvasRef.current.getBoundingClientRect();
+                onAddNode('tool', Math.round((r.width / 2 - pan.x)/zoom - 100), Math.round((r.height / 2 - pan.y)/zoom - 60));
+              }
+            }}
+            className="p-2 bg-white hover:bg-slate-100 border border-slate-200 hover:border-black text-black rounded-full cursor-pointer text-xs flex items-center justify-center w-9 h-9 transition-colors mr-1"
+            title="Add Tool Command [Code]"
+            id="add-node-tool-toolbar"
+          >
+            <Code className="w-4 h-4 text-purple-600" />
+          </button>
+        </div>
+
+        {/* Hint text bottom right */}
+        <div className="absolute bottom-6 right-6 text-[10px] font-mono text-slate-500 bg-white border-2 border-black px-2.5 py-1.5 rounded-lg pointer-events-none shadow-[2px_2px_0px_rgba(0,0,0,1)] z-30 animate-fade-in" id="canvas-hud-instructions">
+          Double-click empty space to draw card • Ctrl+C / Ctrl+V to Copy-Paste • Drag to arrange
+        </div>
+
+        {/* SVG connection edges overlay */}
+        <div 
+          className="absolute inset-0 pointer-events-none select-none z-0"
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: '0 0'
+          }}
+          id="svg-edges-group-container"
+        >
+          <svg className="w-full h-full overflow-visible" id="canvas-edges-svg">
+            <defs>
+              <marker 
+                id="arrow-trusted" 
+                viewBox="0 0 10 10" 
+                refX="6" 
+                refY="5" 
+                markerWidth="6" 
+                markerHeight="6" 
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#059669" />
+              </marker>
+              <marker 
+                id="arrow-experimental" 
+                viewBox="0 0 10 10" 
+                refX="6" 
+                refY="5" 
+                markerWidth="6" 
+                markerHeight="6" 
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#2563eb" />
+              </marker>
+              <marker 
+                id="arrow-default" 
+                viewBox="0 0 10 10" 
+                refX="6" 
+                refY="5" 
+                markerWidth="6" 
+                markerHeight="6" 
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#1e293b" />
+              </marker>
+            </defs>
+
+            {links.map((link) => {
+              const fromNode = filteredNodes.find(n => n.id === link.fromNodeId);
+              const toNode = filteredNodes.find(n => n.id === link.toNodeId);
+              if (!fromNode || !toNode) return null;
+
+              const ports = {
+                from: getNodePorts(fromNode),
+                to: getNodePorts(toNode)
+              };
+
+              // Calculate clean curve nodes
+              const startX = ports.from.right.x;
+              const startY = ports.from.right.y;
+              const endX = ports.to.left.x;
+              const endY = ports.to.left.y;
+
+              const cp1x = startX + Math.max(50, (endX - startX) * 0.45);
+              const cp1y = startY;
+              const cp2x = endX - Math.max(50, (endX - startX) * 0.45);
+              const cp2y = endY;
+
+              const dAttribute = `M ${startX} ${startY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`;
+
+              // Determine edge color based on source node trust levels
+              const isSourceTrusted = fromNode.status === 'trusted';
+              const strokeColor = isSourceTrusted ? '#059669' : (fromNode.status === 'experimental' ? '#2563eb' : '#1e293b');
+              const markerId = isSourceTrusted ? 'arrow-trusted' : (fromNode.status === 'experimental' ? 'arrow-experimental' : 'arrow-default');
+
+              // Badge middle points
+              const midX = (startX + endX) / 2;
+              const midY = (startY + endY) / 2;
+
+              return (
+                <g key={link.id} className="pointer-events-auto" id={`g-link-${link.id}`}>
+                  {/* Outer glow background line */}
+                  <path 
+                    d={dAttribute}
+                    fill="none"
+                    stroke={strokeColor}
+                    strokeWidth="4"
+                    className="opacity-0 hover:opacity-20 transition-opacity duration-200 cursor-pointer"
+                  />
+                  {/* Core connection indicator */}
+                  <path 
+                    d={dAttribute}
+                    fill="none"
+                    stroke={strokeColor}
+                    strokeWidth="2"
+                    strokeDasharray={fromNode.status === 'experimental' ? '5 4' : undefined}
+                    className="transition-all duration-200"
+                    markerEnd={`url(#${markerId})`}
+                  />
+
+                  {/* Detach Link Badge Button in the middle */}
+                  <g 
+                    transform={`translate(${midX}, ${midY})`}
+                    className="cursor-pointer group pointer-events-auto animate-fade-in"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteLink(link.id);
+                    }}
+                  >
+                    <title>Remove Node link connection</title>
+                    <rect 
+                      x="-14" 
+                      y="-10" 
+                      width="28" 
+                      height="20" 
+                      rx="4" 
+                      fill="#ffffff" 
+                      stroke="#000000" 
+                      strokeWidth="1.5"
+                      className="group-hover:fill-red-50 group-hover:stroke-red-500 transition-colors shadow-[1px_1px_0px_#000]"
+                    />
+                    {link.label ? (
+                      <text 
+                        className="text-[9px] font-mono font-bold select-none" 
+                        fill="#000000" 
+                        textAnchor="middle" 
+                        dominantBaseline="middle"
+                        y="-15"
+                      >
+                        {link.label}
+                      </text>
+                    ) : null}
+                    <line x1="-3" y1="-3" x2="3" y2="3" stroke="#000000" strokeWidth="1.5" className="group-hover:stroke-red-500" />
+                    <line x1="3" y1="-3" x2="-3" y2="3" stroke="#000000" strokeWidth="1.5" className="group-hover:stroke-red-500" />
+                  </g>
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* Dynamic Nodes Workspace Layer */}
+        <div 
+          className="absolute inset-0 pointer-events-none z-10"
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: '0 0'
+          }}
+          id="canvas-active-cards-layer"
+        >
+          {filteredNodes.map((node) => {
+            const isSelected = selectedNodeId === node.id;
+            const isTargetOfConnectState = linkingSourceId !== null && linkingSourceId !== node.id;
+            
+            return (
+              <div
+                key={node.id}
+                style={{
+                  left: node.positionX,
+                  top: node.positionY,
+                  position: 'absolute'
+                }}
+                onMouseDown={(e) => handleNodeDragStart(e, node)}
+                className={`canvas-node w-60 bg-white border-2 text-slate-800 rounded-lg pointer-events-auto flex flex-col group transition-all duration-200 shadow-md ${
+                  isSelected 
+                    ? 'border-blue-600 shadow-[4px_4px_0px_#2563eb] ring-2 ring-blue-600/15' 
+                    : isTargetOfConnectState
+                    ? 'border-purple-600 shadow-[4px_4px_0px_#a855f7] ring-4 ring-purple-500/15 animate-pulse'
+                    : node.status === 'trusted'
+                    ? 'border-black hover:border-emerald-600 shadow-[4px_4px_0px_#10b981]'
+                    : node.status === 'experimental'
+                    ? 'border-black hover:border-purple-600 shadow-[4px_4px_0px_#a855f7]'
+                    : 'border-slate-400 opacity-85 shadow-[3px_3px_0px_#000]'
+                }`}
+                id={`card-node-${node.id}`}
+              >
+                {/* Header info with inline delete */}
+                <div className="flex items-center justify-between border-b-2 border-black px-3 py-2 bg-slate-50 rounded-t-lg" id={`node-head-${node.id}`}>
+                  <div className="flex items-center gap-1.5" id={`node-title-group-${node.id}`}>
+                    <span className="p-1 bg-white border border-slate-300 rounded shadow-[1px_1px_0px_#000]">
+                      {getNodeIcon(node.type)}
+                    </span>
+                    <span className="text-[10px] uppercase font-mono font-bold tracking-wider text-slate-500 select-none">
+                      {node.type}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 select-none" onClick={(e) => e.stopPropagation()}>
+                    {getStatusBadge(node.status)}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteNode(node.id);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-650 rounded cursor-pointer transition-colors"
+                      title="Delete Node"
+                      id={`delete-btn-${node.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Node body content */}
+                <div className="p-3 flex-1 flex flex-col justify-between bg-white animate-fade-in" id={`node-body-${node.id}`}>
+                  <div id={`node-info-${node.id}`}>
+                    <h3 className="text-xs font-black text-black line-clamp-1 select-text">
+                      {node.title || <span className="italic text-slate-400 font-medium">Untitled Node</span>}
+                    </h3>
+
+                    {/* Image rendering inside image nodes */}
+                    {node.type === 'image' && node.content && (
+                      <div 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setPreviewImageUrl(node.content); 
+                          setPreviewImageTitle(node.title || 'Image Preview'); 
+                        }} 
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="my-1.5 border border-slate-200 rounded overflow-hidden max-h-32 bg-slate-50 flex items-center justify-center cursor-zoom-in select-none shadow-inner group/img relative" 
+                        id={`node-image-container-${node.id}`}
+                        title="Click to view full screen preview"
+                      >
+                        <img 
+                          src={node.content} 
+                          alt={node.title} 
+                          referrerPolicy="no-referrer" 
+                          className="object-contain w-full h-full max-h-32 transition-transform hover:scale-105" 
+                          id={`node-image-img-${node.id}`}
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity text-white text-[9px] font-bold font-mono uppercase tracking-wider">
+                          🔍 Click to Preview
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Video embedding preview player or player trigger inside video nodes */}
+                    {node.type === 'video' && (node.sourceUrl || node.content) && (
+                      <div className="my-1.5 border border-slate-200 rounded overflow-hidden bg-slate-50 p-1 shadow-inner" id={`node-video-container-${node.id}`}>
+                        {(() => {
+                          const vidUrl = node.sourceUrl || node.content || '';
+                          let ytId = '';
+                          try {
+                            const p = new URL(vidUrl);
+                            if (p.hostname.includes('youtube.com')) {
+                              ytId = p.searchParams.get('v') || '';
+                            } else if (p.hostname.includes('youtu.be')) {
+                              ytId = p.pathname.slice(1);
+                            }
+                          } catch (_) {}
+
+                          if (ytId) {
+                            return (
+                              <iframe 
+                                src={`https://www.youtube.com/embed/${ytId}`}
+                                className="w-full h-24 rounded border-0 select-none pointer-events-auto"
+                                title="Video Embed"
+                                allowFullScreen
+                                onMouseDown={(e) => e.stopPropagation()}
+                                id={`node-video-iframe-${node.id}`}
+                              />
+                            );
+                          }
+                          return (
+                            <a 
+                              href={vidUrl} 
+                              target="_blank" 
+                              rel="referrer" 
+                              className="text-[9px] text-rose-700 font-bold block bg-rose-50 hover:bg-rose-100 p-2 text-center rounded border border-rose-200 transition-all uppercase font-mono select-none pointer-events-auto"
+                              onClick={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              id={`node-video-action-${node.id}`}
+                            >
+                              ▶ View Media Source Link
+                            </a>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    <p 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onNodeDragStart) {
+                          onNodeDragStart();
+                        }
+                        setActiveExpandedNode(node);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="text-[11px] text-slate-650 font-medium line-clamp-3 my-1.5 select-text leading-relaxed hover:bg-slate-50 hover:text-blue-700 p-1 rounded cursor-pointer transition-all border border-transparent hover:border-slate-200"
+                      title="Click to expand details or edit"
+                    >
+                      {node.content || <span className="italic text-slate-400 font-mono">No content or details entered. Click to edit/expand notepad.</span>}
+                    </p>
+                  </div>
+
+                  {/* Progress indicators and source URL if available */}
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between select-none" id={`node-meta-${node.id}`}>
+                    <div className="flex items-center gap-3" id={`node-stats-${node.id}`}>
+                      {node.rating > 0 && (
+                        <div className="flex items-center gap-0.5" title={`Rating: ${node.rating}`}>
+                          <Star className="w-3 h-3 text-amber-500 fill-amber-400" />
+                          <span className="text-[10px] font-mono font-bold text-slate-700">{node.rating}</span>
+                        </div>
+                      )}
+                      {node.confidenceScore > 0 && (
+                        <div className="flex items-center gap-1" title={`Confidence: ${node.confidenceScore}%`}>
+                          <span className="text-[9px] font-mono text-slate-400 font-bold uppercase">C:</span>
+                          <span className={`text-[10px] font-mono font-extrabold ${
+                            node.confidenceScore >= 80 ? 'text-emerald-600' : (node.confidenceScore >= 50 ? 'text-amber-600' : 'text-rose-600')
+                          }`}>
+                            {node.confidenceScore}%
+                          </span>
+                        </div>
+                      )}
+                      
+                      {/* Detailed edit notepad expand button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onNodeDragStart) {
+                            onNodeDragStart();
+                          }
+                          setActiveExpandedNode(node);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-50 hover:bg-neutral-900 hover:text-white border border-slate-300 hover:border-black rounded text-[9px] font-mono font-bold text-slate-700 transition-all cursor-pointer shadow-[1px_1px_0px_#000]"
+                        title="Open full expanded document notepad"
+                        id={`expand-notepad-btn-${node.id}`}
+                      >
+                        <Maximize2 className="w-2.5 h-2.5" />
+                        <span>EXPAND</span>
+                      </button>
+                    </div>
+
+                    {node.sourceUrl ? (
+                      <a 
+                        href={node.sourceUrl} 
+                        target="_blank" 
+                        rel="referrer" 
+                        className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-600 transition-colors border border-transparent hover:border-slate-200"
+                        title={node.sourceTitle || node.sourceUrl}
+                        onClick={(e) => e.stopPropagation()}
+                        id={`external-link-node-${node.id}`}
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Drawer bottom spacing placeholder */}
+                <div className="h-2 bg-white rounded-b-lg" />
+
+                {/* Decorative Anchor Output Port node right */}
+                <div 
+                  className="absolute -right-2 top-1/2 -mt-1.5 w-3 h-3 bg-white border-2 border-black hover:bg-black rounded-full cursor-crosshair z-20 transition-all pointer-events-auto"
+                  title="Source connection edge anchor"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setLinkingSourceId(node.id);
+                  }}
+                  id={`anchor-right-${node.id}`}
+                />
+
+                {/* Decorative Anchor Input Port node left */}
+                <div 
+                  className="absolute -left-2 top-1/2 -mt-1.5 w-3 h-3 bg-white border-2 border-black hover:bg-black rounded-full cursor-crosshair z-20 transition-all pointer-events-auto"
+                  title="Target connection edge anchor"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    if (linkingSourceId && linkingSourceId !== node.id) {
+                      onAddLink(linkingSourceId, node.id);
+                      setLinkingSourceId(null);
+                    } else {
+                      setLinkingSourceId(node.id);
+                    }
+                  }}
+                  id={`anchor-left-${node.id}`}
+                />
+
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Full-screen Image Preview Lightbox Overlay */}
+        {previewImageUrl && (
+          <div 
+            className="fixed inset-0 bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 z-[999] animate-fade-in cursor-zoom-out select-none"
+            onClick={() => setPreviewImageUrl(null)}
+            id="image-lightbox-overlay"
+          >
+            <button 
+              onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(null); }}
+              className="absolute top-5 right-5 p-3 bg-white/10 hover:bg-white/25 border border-white/20 hover:border-white text-white rounded-full transition-all cursor-pointer shadow-lg active:scale-95"
+              title="Close Full Screen Preview"
+              id="close-lightbox-btn"
+            >
+              <X className="w-6 h-6" />
+            </button>
+
+            <div 
+              className="max-w-4xl max-h-[80vh] flex items-center justify-center border-4 border-white bg-slate-900 shadow-2xl rounded-lg overflow-hidden animate-scale-up" 
+              onClick={(e) => e.stopPropagation()}
+              id="lightbox-image-border"
+            >
+              <img 
+                src={previewImageUrl} 
+                alt={previewImageTitle} 
+                referrerPolicy="no-referrer"
+                className="max-w-full max-h-[80vh] object-contain cursor-default" 
+                id="lightbox-main-img"
+              />
+            </div>
+
+            <div className="mt-4 bg-white/95 border-2 border-black text-black px-6 py-2.5 rounded-lg shadow-[4px_4px_0px_#000] text-center max-w-lg select-text font-mono font-bold text-xs uppercase cursor-default" onClick={(e) => e.stopPropagation()}>
+              🎨 {previewImageTitle || "Image Detail File"}
+            </div>
+          </div>
+        )}
+
+        {/* Detailed Notepad Reader & Editor Overlay Modal */}
+        {(() => {
+          const activeExpandedNodeCurrent = nodes.find(n => n.id === activeExpandedNode?.id) || null;
+          if (!activeExpandedNodeCurrent) return null;
+
+          return (
+            <div 
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-[998] animate-fade-in pointer-events-auto"
+              onClick={() => setActiveExpandedNode(null)}
+              id="notepad-expanded-overlay"
+            >
+              <div 
+                className="w-full max-w-2xl bg-[#fcfbf9] border-3 border-black rounded-lg shadow-[8px_8px_0px_#000] flex flex-col max-h-[85vh] overflow-hidden animate-scale-up pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+                id="notepad-expanded-modal-box"
+              >
+                {/* Modal Header */}
+                <div className="bg-amber-50/50 border-b-3 border-black px-5 py-4 flex items-center justify-between" id="notepad-modal-header">
+                  <div className="flex items-center gap-2" id="notepad-modal-header-badge">
+                    <span className="p-1 px-2.5 bg-black text-white text-[10px] font-mono font-black uppercase rounded tracking-wide">
+                      {activeExpandedNodeCurrent.type} notepad
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono font-bold">
+                      ID: {activeExpandedNodeCurrent.id}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setActiveExpandedNode(null)}
+                    className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-black rounded border border-transparent hover:border-slate-300 transition-all cursor-pointer"
+                    title="Close Notepad Overlay"
+                    id="close-notepad-modal-btn"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Modal Body Scroll Container */}
+                <div className="p-6 flex-1 flex flex-col gap-4 overflow-y-auto" id="notepad-modal-body-container">
+                  <div className="space-y-1" id="notepad-title-input-section">
+                    <label className="block text-[10px] font-mono font-bold uppercase text-slate-500">Document Card Title</label>
+                    <input 
+                      type="text"
+                      value={activeExpandedNodeCurrent.title}
+                      onChange={(e) => onUpdateNode(activeExpandedNodeCurrent.id, { title: e.target.value })}
+                      className="w-full bg-white border-2 border-black rounded-lg px-4 py-2.5 font-bold text-sm text-black outline-none focus:ring-2 focus:ring-blue-500/10 placeholder-slate-400"
+                      placeholder="Enter document title..."
+                      id="notepad-title-text-field"
+                    />
+                  </div>
+
+                  <div className="flex-1 flex flex-col gap-1 min-h-[250px]" id="notepad-desc-input-section">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-mono font-bold uppercase text-slate-500">Document Body Content (Fully Scrollable Reader & Editor)</label>
+                      <span className="text-[9px] font-mono font-bold text-slate-400">Autosaves live</span>
+                    </div>
+                    <textarea 
+                      value={activeExpandedNodeCurrent.content}
+                      onChange={(e) => onUpdateNode(activeExpandedNodeCurrent.id, { content: e.target.value })}
+                      className="w-full flex-1 bg-white border-2 border-black rounded-lg p-4 font-mono text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500/10 leading-relaxed resize-none h-full shadow-inner"
+                      placeholder="Type or paste your markdown note, checklists, guides, or workspace descriptions here..."
+                      id="notepad-body-textarea-field"
+                    />
+                  </div>
+
+                  {/* Additional Helper info */}
+                  <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-200 text-slate-500 font-mono text-[9px]" id="notepad-meta-grid">
+                    <div>
+                      <span className="font-bold uppercase block text-slate-400">Created At</span>
+                      <span>{new Date(activeExpandedNodeCurrent.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="font-bold uppercase block text-slate-400">Last Revised</span>
+                      <span>{new Date(activeExpandedNodeCurrent.updatedAt || activeExpandedNodeCurrent.createdAt).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Modal Footer Controls */}
+                <div className="border-t-3 border-black bg-slate-50 px-6 py-4 flex items-center justify-between" id="notepad-modal-footer">
+                  <span className="text-[10px] font-mono text-slate-500">
+                    ⚡ Type freely. Changes are saved back to your canvas board live.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveExpandedNode(null)}
+                    className="py-2 px-5 bg-black hover:bg-neutral-800 text-white font-bold text-xs rounded-lg border-2 border-black cursor-pointer shadow-[3px_3px_0px_#bbb] active:translate-y-[1px] active:shadow-[1px_1px_0px_#bbb]"
+                    id="close-notepad-modal-footer-btn"
+                  >
+                    Done Editing
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+  );
+}

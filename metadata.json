@@ -1,0 +1,6 @@
+{
+  "name": "Workflow Brain",
+  "description": "A visual workflow and knowledge management tool for developers and solo-builders to map tutorials, notes, tools, and links onto an interactive canvas with trust labeling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
