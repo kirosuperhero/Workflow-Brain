@@ -32,7 +32,8 @@ import {
   X,
   Undo,
   Redo,
-  Grid
+  Grid,
+  Magnet
 } from 'lucide-react';
 
 interface CanvasProps {
@@ -53,6 +54,24 @@ interface CanvasProps {
   canUndo: boolean;
   canRedo: boolean;
 }
+
+// Precompute smart alignment search offsets sorted by Euclidean distance
+const GRID_STEP_SIZE = 24;
+const SMART_ALIGN_OFFSETS = (() => {
+  const offsets: { dx: number; dy: number; dist: number }[] = [];
+  // Search within +-12 grid units (up to 288px distance in grid spaces)
+  for (let gx = -12; gx <= 12; gx++) {
+    for (let gy = -12; gy <= 12; gy++) {
+      offsets.push({
+        dx: gx * GRID_STEP_SIZE,
+        dy: gy * GRID_STEP_SIZE,
+        dist: gx * gx + gy * gy
+      });
+    }
+  }
+  // Sort from inside out (closest distance to furthest)
+  return offsets.sort((a, b) => a.dist - b.dist);
+})();
 
 export default function Canvas({
   nodes,
@@ -94,6 +113,16 @@ export default function Canvas({
   const [alignGuidesX, setAlignGuidesX] = useState<number[]>([]);
   const [alignGuidesY, setAlignGuidesY] = useState<number[]>([]);
 
+  // Smart alignment / collision avoidance mode
+  const [smartAlign, setSmartAlign] = useState<boolean>(() => {
+    const saved = localStorage.getItem('canvas_smart_align');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('canvas_smart_align', String(smartAlign));
+  }, [smartAlign]);
+
   // Snap to grid setting for precision node alignment
   const [snapToGrid, setSnapToGrid] = useState<boolean>(() => {
     const saved = localStorage.getItem('canvas_snap_to_grid');
@@ -112,6 +141,18 @@ export default function Canvas({
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasWidth, setCanvasWidth] = useState<number>(1200);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setCanvasWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(canvasRef.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Clean linking source if node gets deleted or deselected
   useEffect(() => {
@@ -560,13 +601,122 @@ export default function Canvas({
       let targetX = Math.round(currX - dragStartOffset.x);
       let targetY = Math.round(currY - dragStartOffset.y);
 
+      // Snap to grid if enabled (before checking smart alignments and collisions)
       if (snapToGrid) {
         targetX = Math.round(targetX / 24) * 24;
         targetY = Math.round(targetY / 24) * 24;
       }
 
-      // Keep nodes within bounds
-      onUpdateNodePosition(draggingNodeId, Math.max(-500, Math.min(2500, targetX)), Math.max(-500, Math.min(2000, targetY)));
+      const activeDraggedNode = nodes.find(n => n.id === draggingNodeId);
+      let finalX = targetX;
+      let finalY = targetY;
+      let guidesX: number[] = [];
+      let guidesY: number[] = [];
+
+      // Determine if smart alignment and overlap prevention are active
+      const isSmartAlignActive = smartAlign && !e.altKey && !e.shiftKey;
+
+      if (activeDraggedNode) {
+        const otherNodes = nodes.filter(n => n.id !== draggingNodeId);
+        const dragW = 240;
+        const dragH = activeDraggedNode.type === 'image' ? 300 : (activeDraggedNode.type === 'video' ? 250 : 168);
+
+        if (isSmartAlignActive) {
+          // First step: Resolve overlaps and collisions using our outwards spiral search
+          let resolvedX = targetX;
+          let resolvedY = targetY;
+          let foundCollisionFree = false;
+
+          for (const offset of SMART_ALIGN_OFFSETS) {
+            const candidateX = targetX + offset.dx;
+            const candidateY = targetY + offset.dy;
+
+            // Check if candidate position overlaps any other node
+            let intersects = false;
+            for (const other of otherNodes) {
+              const otherW = 240;
+              const otherH = other.type === 'image' ? 300 : (other.type === 'video' ? 250 : 168);
+              
+              // Buffer spaces between nodes to look extremely polished
+              const buffer = 12;
+              if (
+                candidateX < other.positionX + otherW + buffer &&
+                candidateX + dragW + buffer > other.positionX &&
+                candidateY < other.positionY + otherH + buffer &&
+                candidateY + dragH + buffer > other.positionY
+              ) {
+                intersects = true;
+                break;
+              }
+            }
+
+            if (!intersects) {
+              resolvedX = candidateX;
+              resolvedY = candidateY;
+              foundCollisionFree = true;
+              break;
+            }
+          }
+
+          if (foundCollisionFree) {
+            finalX = resolvedX;
+            finalY = resolvedY;
+          }
+
+          // Second step: Find matching alignment lines for the final non-overlapping position
+          // This calculates if any edge or center of our resolved node aligns with another card
+          const tolerance = 6;
+          for (const other of otherNodes) {
+            const otherW = 120 * 2; // width: 240
+            const otherH = other.type === 'image' ? 300 : (other.type === 'video' ? 250 : 168);
+
+            // Horizontal/Vertical alignment reference lines
+            const otherLeft = other.positionX;
+            const otherCenter = other.positionX + otherW / 2;
+            const otherRight = other.positionX + otherW;
+
+            const otherTop = other.positionY;
+            const otherCenterY = other.positionY + otherH / 2;
+            const otherBottom = other.positionY + otherH;
+
+            // X guides
+            if (Math.abs(finalX - otherLeft) < tolerance) {
+              guidesX.push(otherLeft);
+            } else if (Math.abs(finalX - otherRight) < tolerance) {
+              guidesX.push(otherRight);
+            } else if (Math.abs((finalX + dragW) - otherLeft) < tolerance) {
+              guidesX.push(otherLeft);
+            } else if (Math.abs((finalX + dragW) - otherRight) < tolerance) {
+              guidesX.push(otherRight);
+            } else if (Math.abs((finalX + dragW / 2) - otherCenter) < tolerance) {
+              guidesX.push(otherCenter);
+            }
+
+            // Y guides
+            if (Math.abs(finalY - otherTop) < tolerance) {
+              guidesY.push(otherTop);
+            } else if (Math.abs(finalY - otherBottom) < tolerance) {
+              guidesY.push(otherBottom);
+            } else if (Math.abs((finalY + dragH) - otherTop) < tolerance) {
+              guidesY.push(otherTop);
+            } else if (Math.abs((finalY + dragH) - otherBottom) < tolerance) {
+              guidesY.push(otherBottom);
+            } else if (Math.abs((finalY + dragH / 2) - otherCenterY) < tolerance) {
+              guidesY.push(otherCenterY);
+            }
+          }
+        }
+      }
+
+      setAlignGuidesX(guidesX);
+      setAlignGuidesY(guidesY);
+
+      // Keep nodes within logical bounds
+      onUpdateNodePosition(
+        draggingNodeId, 
+        Math.max(-500, Math.min(2500, finalX)), 
+        Math.max(-500, Math.min(2000, finalY))
+      );
     } else if (isPanning) {
       const dx = e.clientX - panStart.x;
       const dy = e.clientY - panStart.y;
@@ -580,6 +730,8 @@ export default function Canvas({
   const handleMouseUp = () => {
     if (draggingNodeId) {
       setDraggingNodeId(null);
+      setAlignGuidesX([]);
+      setAlignGuidesY([]);
     }
     if (isPanning) {
       setIsPanning(false);
@@ -809,81 +961,98 @@ export default function Canvas({
         id="interactive-canvas-screen"
       >
         {/* Navigation / Control Panel Overlays - Bottom Left */}
-        <div className="absolute bottom-6 left-6 flex items-center gap-1.5 bg-white border-2 border-black p-1.5 rounded-lg shadow-[3px_3px_0px_rgba(0,0,0,1)] z-30 canvas-controls" id="canvas-zoom-controls">
+        <div className="absolute bottom-6 left-6 flex items-center gap-1 bg-white border-2 border-black p-1 rounded-lg shadow-[3px_3px_0px_rgba(0,0,0,1)] z-30 canvas-controls" id="canvas-zoom-controls">
           <button 
             type="button"
             onClick={zoomIn} 
-            className="p-1 px-2.5 text-xs bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center transition-all h-8 shadow-[1px_1px_0px_#000] active:translate-y-[1px]"
+            className="p-1 px-1.5 text-xs bg-white hover:bg-slate-50 text-black border border-slate-200 hover:border-black rounded-md cursor-pointer flex items-center transition-all h-7 shadow-[1px_1px_0px_rgba(0,0,0,0.05)] active:translate-y-[1px]"
             title="Increase Zoom"
             id="zoom-in-control"
           >
             <ZoomIn className="w-4 h-4" />
           </button>
           
-          <div className="px-2 text-xs font-mono text-black font-black w-14 text-center select-none" id="zoom-value-display">
+          <div className="px-1.5 text-xs font-mono text-black font-black w-12 text-center select-none" id="zoom-value-display">
             {Math.round(zoom * 100)}%
           </div>
           
           <button 
             type="button"
             onClick={zoomOut} 
-            className="p-1 px-2.5 text-xs bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center transition-all h-8 shadow-[1px_1px_0px_#000] active:translate-y-[1px]"
+            className="p-1 px-1.5 text-xs bg-white hover:bg-slate-50 text-black border border-slate-200 hover:border-black rounded-md cursor-pointer flex items-center transition-all h-7 shadow-[1px_1px_0px_rgba(0,0,0,0.05)] active:translate-y-[1px]"
             title="Decrease Zoom"
             id="zoom-out-control"
           >
             <ZoomOut className="w-4 h-4" />
           </button>
           
-          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+          {canvasWidth >= 850 && <div className="h-4 w-[1px] bg-slate-300 mx-0.5" />}
           
           <button 
             type="button"
             onClick={fitAllIntoView} 
-            className="p-1.5 bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center gap-1 shadow-[1px_1px_0px_#000] active:translate-y-[1px] transition-all"
+            className="p-1 px-1.5 bg-white hover:bg-slate-50 text-black border border-slate-200 hover:border-black rounded-md cursor-pointer flex items-center gap-1 active:translate-y-[1px] transition-all h-7"
             title="Fit Workspace"
             id="fit-all-control"
           >
             <Maximize2 className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-mono font-bold hidden md:inline">Fit All</span>
+            {canvasWidth >= 850 && <span className="text-[10px] font-mono font-bold">Fit All</span>}
           </button>
           
           <button 
             type="button"
             onClick={resetZoomPan} 
-            className="p-1.5 bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center gap-1 shadow-[1px_1px_0px_#000] active:translate-y-[1px] transition-all"
+            className="p-1 px-1.5 bg-white hover:bg-slate-50 text-black border border-slate-200 hover:border-black rounded-md cursor-pointer flex items-center gap-1 active:translate-y-[1px] transition-all h-7"
             title="Reset Scope"
             id="reset-canvas-control"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
-          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+          {canvasWidth >= 850 && <div className="h-4 w-[1px] bg-slate-300 mx-0.5" />}
 
           <button 
             type="button"
             onClick={() => setSnapToGrid(prev => !prev)} 
-            className={`p-1.5 border-2 rounded-lg flex items-center gap-1 transition-all h-8 ${
+            className={`p-1 px-1.5 border rounded-md flex items-center gap-1 transition-all h-7 select-none ${
               snapToGrid 
-                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-600 shadow-[1px_1px_0px_#2563eb] active:translate-y-[1px] cursor-pointer' 
-                : 'bg-white hover:bg-slate-50 text-black border-black shadow-[1px_1px_0px_#000] active:translate-y-[1px] cursor-pointer'
+                ? 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-300 shadow-[1px_1px_0px_rgba(37,99,235,0.2)] active:translate-y-[1px] cursor-pointer' 
+                : 'bg-white hover:bg-slate-50 text-black border-slate-200 hover:border-black shadow-[1.5px_1.5px_0px_rgba(0,0,0,0.05)] active:translate-y-[1px] cursor-pointer'
             }`}
             title={snapToGrid ? "Snap to Grid Enabled (24px)" : "Snap to Grid Disabled"}
             id="snap-grid-canvas-control"
           >
             <Grid className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-mono font-bold hidden md:inline">Snap</span>
+            {canvasWidth >= 850 && <span className="text-[10px] font-mono font-bold">Snap</span>}
           </button>
 
-          <div className="h-5 w-[1.5px] bg-black mx-1"></div>
+          {canvasWidth >= 850 && <div className="h-4 w-[1px] bg-slate-300 mx-0.5" />}
+
+          <button 
+            type="button"
+            onClick={() => setSmartAlign(prev => !prev)} 
+            className={`p-1 px-1.5 border rounded-md flex items-center gap-1 transition-all h-7 select-none ${
+              smartAlign 
+                ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-300 shadow-[1px_1px_0px_rgba(168,85,247,0.2)] active:translate-y-[1px] cursor-pointer font-bold' 
+                : 'bg-white hover:bg-slate-50 text-black border-slate-200 hover:border-black shadow-[1.5px_1.5px_0px_rgba(0,0,0,0.05)] active:translate-y-[1px] cursor-pointer'
+            }`}
+            title={smartAlign ? "Smart Align Enabled: Avoids Overlaps/Collisions (Hold Shift/Alt to override)" : "Free Move Mode: No Collision Guards or Alignment"}
+            id="smart-align-canvas-control"
+          >
+            <Magnet className="w-3.5 h-3.5" />
+            {canvasWidth >= 850 && <span className="text-[10px] font-mono font-bold">{smartAlign ? "Smart" : "Free Move"}</span>}
+          </button>
+
+          {canvasWidth >= 850 && <div className="h-4 w-[1px] bg-slate-300 mx-0.5" />}
 
           <button 
             type="button"
             onClick={onUndo} 
             disabled={!canUndo}
-            className={`p-1.5 border-2 border-black rounded-lg flex items-center gap-1 transition-all h-8 ${
+            className={`p-1 px-1.5 border border-black rounded-md flex items-center gap-1 transition-all h-7 ${
               canUndo 
-                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_#000] active:translate-y-[1px]' 
-                : 'bg-slate-100 text-slate-350 cursor-not-allowed opacity-50'
+                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_rgba(0,0,0,0.1)] active:translate-y-[1px]' 
+                : 'bg-slate-50 text-slate-350 cursor-not-allowed opacity-40 border-slate-200'
             }`}
             title="Undo (Ctrl+Z)"
             id="undo-canvas-control"
@@ -895,10 +1064,10 @@ export default function Canvas({
             type="button"
             onClick={onRedo} 
             disabled={!canRedo}
-            className={`p-1.5 border-2 border-black rounded-lg flex items-center gap-1 transition-all h-8 ${
+            className={`p-1 px-1.5 border border-black rounded-md flex items-center gap-1 transition-all h-7 ${
               canRedo 
-                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_#000] active:translate-y-[1px]' 
-                : 'bg-slate-100 text-slate-350 cursor-not-allowed opacity-50'
+                ? 'bg-white hover:bg-slate-100 text-black cursor-pointer shadow-[1px_1px_0px_rgba(0,0,0,0.1)] active:translate-y-[1px]' 
+                : 'bg-slate-50 text-slate-350 cursor-not-allowed opacity-40 border-slate-200'
             }`}
             title="Redo (Ctrl+Y)"
             id="redo-canvas-control"
@@ -908,8 +1077,17 @@ export default function Canvas({
         </div>
 
         {/* Dynamic Whiteboard Bottom Floating Toolbar (Miro/Weje style) */}
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white border-2 border-black p-1.5 rounded-full shadow-[4px_4px_0px_rgba(0,0,0,1)] z-30 flex items-center gap-1" id="canvas-bottom-floating-toolbar">
-          <span className="text-[9px] font-mono text-slate-400 pl-3 uppercase tracking-wider font-extrabold select-none pr-1">Tools:</span>
+        <div 
+          className={`absolute bg-white border-2 border-black p-1.5 rounded-full shadow-[4px_4px_0px_rgba(0,0,0,1)] z-30 flex items-center gap-1 transition-all duration-300 ${
+            canvasWidth < 1000 
+              ? 'bottom-20 left-6 transform-none' 
+              : 'bottom-6 left-1/2 -translate-x-1/2'
+          }`} 
+          id="canvas-bottom-floating-toolbar"
+        >
+          {canvasWidth >= 640 && (
+            <span className="text-[9px] font-mono text-slate-400 pl-3 uppercase tracking-wider font-extrabold select-none pr-1" id="tools-label-text">Tools:</span>
+          )}
           
           <button 
             type="button"
@@ -1003,9 +1181,11 @@ export default function Canvas({
         </div>
 
         {/* Hint text bottom right */}
-        <div className="absolute bottom-6 right-6 text-[10px] font-mono text-slate-500 bg-white border-2 border-black px-2.5 py-1.5 rounded-lg pointer-events-none shadow-[2px_2px_0px_rgba(0,0,0,1)] z-30 animate-fade-in" id="canvas-hud-instructions">
-          Double-click empty space to draw card • Ctrl+C / Ctrl+V to Copy-Paste • Drag to arrange
-        </div>
+        {canvasWidth >= 1400 && (
+          <div className="absolute bottom-6 right-6 text-[10px] font-mono text-slate-500 bg-white border-2 border-black px-2.5 py-1.5 rounded-lg pointer-events-none shadow-[2px_2px_0px_rgba(0,0,0,1)] z-30 animate-fade-in" id="canvas-hud-instructions">
+            Double-click empty space to draw card • Ctrl+C / Ctrl+V to Copy-Paste • Drag to arrange
+          </div>
+        )}
 
         {/* SVG connection edges overlay */}
         <div 
@@ -1144,6 +1324,34 @@ export default function Canvas({
                 </g>
               );
             })}
+
+            {/* Smart Alignment Guidelines */}
+            {alignGuidesX.map((xVal, index) => (
+              <line
+                key={`align-guide-x-${index}`}
+                x1={xVal}
+                y1={-1000}
+                x2={xVal}
+                y2={3000}
+                stroke="#2563eb"
+                strokeWidth="1.2"
+                strokeDasharray="4 4"
+                className="opacity-60"
+              />
+            ))}
+            {alignGuidesY.map((yVal, index) => (
+              <line
+                key={`align-guide-y-${index}`}
+                x1={-1000}
+                y1={yVal}
+                x2={3000}
+                y2={yVal}
+                stroke="#2563eb"
+                strokeWidth="1.2"
+                strokeDasharray="4 4"
+                className="opacity-60"
+              />
+            ))}
           </svg>
         </div>
 
@@ -1166,7 +1374,8 @@ export default function Canvas({
                 style={{
                   left: node.positionX,
                   top: node.positionY,
-                  position: 'absolute'
+                  position: 'absolute',
+                  zIndex: draggingNodeId === node.id ? 100 : (isSelected ? 50 : 10)
                 }}
                 onMouseDown={(e) => handleNodeDragStart(e, node)}
                 className={`canvas-node w-60 bg-white border-2 text-slate-800 rounded-lg pointer-events-auto flex flex-col group transition-all duration-200 shadow-md ${
