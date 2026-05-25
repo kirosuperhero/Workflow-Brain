@@ -5,12 +5,17 @@ import {
   NodeLink, 
   WorkflowVersion, 
   NodeType, 
-  NodeStatus 
+  NodeStatus,
+  QueueResource,
+  ResourceReview,
+  ResourceLinkToNode,
+  ResourceStatus
 } from './types';
 import { TEMPLATES } from './templates';
 import Canvas from './components/Canvas';
 import Sidebar from './components/Sidebar';
 import ImportExport from './components/ImportExport';
+import ExperimentalQueue from './components/ExperimentalQueue';
 import { 
   Brain, 
   ChevronLeft, 
@@ -47,7 +52,67 @@ import {
 
 const LOCAL_STORAGE_PREFIX = 'workflow_brain_v2';
 
+const SEED_RESOURCES: QueueResource[] = [
+  {
+    id: 'res-seed-1',
+    title: 'Multi-Agent Grounding Orchestrator with Gemini SDK',
+    url: 'https://github.com/google/generative-ai-js',
+    type: 'tool',
+    shortSummary: 'Official TypeScript library for the new Google GenAI SDK. Highly optimal for building RAG applications.',
+    tags: ['ai', 'agent', 'gemini', 'tool'],
+    rating: 4,
+    notes: 'To install run: npm install @google/genai\nSupports full-duplex Live API streaming and fast search grounding overlays.',
+    status: 'experimental',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'res-seed-2',
+    title: 'Framer Motion Layout Animations Best Practices Checklist',
+    url: 'https://motion.dev/docs/layout-animations',
+    type: 'article',
+    shortSummary: 'Step-by-step checklist guide to implementing visual transitions, layout shifts, and route transitions without cumulative layout shift.',
+    tags: ['react', 'animation', 'ux'],
+    rating: 5,
+    notes: 'Excellent documentation for layouts scaling on canvas components. Highlights using layoutId prop for smooth transfers.',
+    status: 'trusted',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'res-seed-3',
+    title: 'Tailwind CSS v4.0 Alpha Review',
+    url: 'https://v4.tailwindcss.com',
+    type: 'article',
+    shortSummary: 'Exploring native Rust-based compiler engine upgrades and custom CSS variables definitions of layout states.',
+    tags: ['css', 'tailwind', 'frontend'],
+    rating: 3,
+    notes: 'Configures entirely inside global CSS with `@import "tailwindcss";` directive instead of standard js config files.',
+    status: 'inbox',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'res-seed-4',
+    title: 'Whiteboard Collision Avoidance Heuristic Note',
+    url: '',
+    type: 'note',
+    shortSummary: 'Theoretical plan for Smart Align overlapping calculation using bounding boxes offset indices.',
+    tags: ['math', 'canvas', 'note'],
+    rating: 0,
+    notes: 'Keep dragging grids responsive with light bounds coordinates checks. Hold shift/alt to bypass smart collision alignments.',
+    status: 'inbox',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
 export default function App() {
+  const [activeTab, setActiveTab] = useState<'workspaces' | 'queue'>('workspaces');
+  const [queueResources, setQueueResources] = useState<QueueResource[]>([]);
+  const [queueReviews, setQueueReviews] = useState<ResourceReview[]>([]);
+  const [queueLinks, setQueueLinks] = useState<ResourceLinkToNode[]>([]);
+
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [nodes, setNodes] = useState<WorkflowNode[]>([]);
   const [links, setLinks] = useState<NodeLink[]>([]);
@@ -113,6 +178,24 @@ export default function App() {
       // First load: seed database using templates values
       seedInitialDatabase();
     }
+
+    // Load Experimental Queue data
+    const rawResources = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`);
+    const rawQueueReviews = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`);
+    const rawQueueLinks = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_links`);
+
+    if (rawResources) {
+      setQueueResources(JSON.parse(rawResources));
+      setQueueReviews(rawQueueReviews ? JSON.parse(rawQueueReviews) : []);
+      setQueueLinks(rawQueueLinks ? JSON.parse(rawQueueLinks) : []);
+    } else {
+      setQueueResources(SEED_RESOURCES);
+      setQueueReviews([]);
+      setQueueLinks([]);
+      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`, JSON.stringify(SEED_RESOURCES));
+      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`, JSON.stringify([]));
+      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_links`, JSON.stringify([]));
+    }
   }, []);
 
   // Sync to database triggers
@@ -121,6 +204,12 @@ export default function App() {
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_nodes`, JSON.stringify(nextNodes));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_links`, JSON.stringify(nextLinks));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_versions`, JSON.stringify(nextVersions));
+  };
+
+  const saveQueueStateToStorage = (nextResources: QueueResource[], nextReviews: ResourceReview[], nextLinks: ResourceLinkToNode[]) => {
+    localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`, JSON.stringify(nextResources));
+    localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`, JSON.stringify(nextReviews));
+    localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_links`, JSON.stringify(nextLinks));
   };
 
   const seedInitialDatabase = () => {
@@ -541,6 +630,106 @@ export default function App() {
     setSelectedNodeId(null);
   };
 
+  const handleAddQueueResource = (resource: Omit<QueueResource, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const newRes: QueueResource = {
+      ...resource,
+      id: `queue-res-${generateId()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const nextResources = [newRes, ...queueResources];
+    setQueueResources(nextResources);
+    saveQueueStateToStorage(nextResources, queueReviews, queueLinks);
+  };
+
+  const handleUpdateQueueResource = (id: string, updatedFields: Partial<QueueResource>) => {
+    const nextResources = queueResources.map(r => {
+      if (r.id === id) {
+        return { ...r, ...updatedFields, updatedAt: new Date().toISOString() };
+      }
+      return r;
+    });
+    setQueueResources(nextResources);
+    saveQueueStateToStorage(nextResources, queueReviews, queueLinks);
+  };
+
+  const handleDeleteQueueResource = (id: string) => {
+    const nextResources = queueResources.filter(r => r.id !== id);
+    const nextReviews = queueReviews.filter(rev => rev.resourceId !== id);
+    const nextLinks = queueLinks.filter(l => l.resourceId !== id);
+    setQueueResources(nextResources);
+    setQueueReviews(nextReviews);
+    setQueueLinks(nextLinks);
+    saveQueueStateToStorage(nextResources, nextReviews, nextLinks);
+  };
+
+  const handleAddResourceReview = (review: Omit<ResourceReview, 'id' | 'reviewedAt'>) => {
+    const newRev: ResourceReview = {
+      ...review,
+      id: `queue-rev-${generateId()}`,
+      reviewedAt: new Date().toISOString()
+    };
+    const nextReviews = [newRev, ...queueReviews];
+    setQueueReviews(nextReviews);
+    saveQueueStateToStorage(queueResources, nextReviews, queueLinks);
+  };
+
+  const handleMoveResourceToWorkflow = (resourceId: string, workflowId: string) => {
+    const res = queueResources.find(r => r.id === resourceId);
+    if (!res) return;
+
+    let nodeType: NodeType = 'link';
+    if (res.type === 'video') nodeType = 'video';
+    else if (res.type === 'tool') nodeType = 'tool';
+    else if (res.type === 'note') nodeType = 'note';
+
+    const newNode: Omit<WorkflowNode, 'id' | 'createdAt' | 'updatedAt'> = {
+      workflowId,
+      type: nodeType,
+      title: res.title || `Imported ${res.type}`,
+      content: res.notes || `Description: ${res.shortSummary}`,
+      summary: res.shortSummary || 'Imported from Experimental Queue.',
+      sourceUrl: res.url || undefined,
+      sourceTitle: res.type ? `${res.type.toUpperCase()}` : undefined,
+      confidenceScore: res.rating > 0 ? res.rating * 20 : 70,
+      rating: res.rating > 0 ? res.rating : 3,
+      status: res.status === 'trusted' ? 'trusted' : 'experimental',
+      positionX: 300 + Math.random() * 80,
+      positionY: 200 + Math.random() * 80,
+      tags: res.tags || []
+    };
+
+    const createdNodeId = handleAddNode(newNode);
+
+    const newLink: ResourceLinkToNode = {
+      id: `queue-link-${generateId()}`,
+      resourceId,
+      workflowId,
+      nodeId: createdNodeId,
+      linkedAt: new Date().toISOString()
+    };
+
+    const nextResources = queueResources.map(r => {
+      if (r.id === resourceId) {
+        return {
+          ...r,
+          status: 'tested' as ResourceStatus,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return r;
+    });
+
+    const nextLinks = [...queueLinks, newLink];
+    setQueueResources(nextResources);
+    setQueueLinks(nextLinks);
+    saveQueueStateToStorage(nextResources, queueReviews, nextLinks);
+
+    setSelectedWorkflowId(workflowId);
+    setActiveTab('workspaces');
+    setSelectedNodeId(createdNodeId);
+  };
+
   // Nav calculations
   const activeWorkflow = workflows.find(w => w.id === selectedWorkflowId);
   const activeWorkflowNodes = nodes.filter(n => n.workflowId === selectedWorkflowId);
@@ -601,274 +790,331 @@ export default function App() {
             </button>
           </div>
 
-          {/* Search Box with options indicators */}
-          <div className="p-4 border-b border-slate-200 select-none">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-              <input 
-                type="text"
-                placeholder="Search documents..."
-                value={sidebarSearch}
-                onChange={(e) => setSidebarSearch(e.target.value)}
-                className="w-full bg-slate-50 border-2 border-black rounded-lg pl-8 pr-10 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white"
-                id="sidebar-search-box"
-              />
-              
-              <div className="absolute right-2.5 top-2.5 flex items-center gap-1 text-slate-400">
-                <span title="Config view"><SlidersHorizontal className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
-                <span title="Invite partners"><UserPlus className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
-              </div>
-            </div>
-          </div>
-
-          {/* Domain Category Horizontal Pills Selector (Issue #1 Solution) */}
-          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 select-none">
-            <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-widest mb-1.5">Project Scopes:</span>
-            
-            <div className="flex flex-wrap gap-1 max-h-[72px] overflow-y-auto pr-1 overflow-x-hidden">
-              <button
-                onClick={() => setSidebarCatFilter('All')}
-                className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer ${
-                  sidebarCatFilter === 'All'
-                    ? 'bg-blue-600 text-white border-black font-black shadow-[1px_1px_0px_#000]'
-                    : 'bg-white hover:bg-slate-100 text-slate-655 border-slate-300'
-                }`}
-              >
-                All
-              </button>
-              
-              {Array.from(new Set(workflows.map(w => w.category).filter(Boolean))).map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setSidebarCatFilter(cat)}
-                  className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer ${
-                    sidebarCatFilter === cat
-                      ? 'bg-blue-600 text-white border-black font-black shadow-[1px_1px_0px_#000]'
-                      : 'bg-white hover:bg-slate-100 text-slate-655 border-slate-300'
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Workspaces Scrollable List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-2 select-none" id="sidebar-documents-list">
-            <span className="block text-[8px] font-mono font-extrabold text-slate-400 uppercase tracking-widest mb-1">Documents ({listableWorkflows.length}):</span>
-            
-            {listableWorkflows.length > 0 ? (
-              listableWorkflows.map((w) => {
-                const isActive = w.id === selectedWorkflowId;
-                const firstLetter = w.title ? w.title.charAt(0).toUpperCase() : 'W';
-                const dateStr = new Date(w.updatedAt || w.createdAt).toLocaleDateString(undefined, { 
-                  month: 'short', 
-                  day: 'numeric' 
-                });
-
-                // Status percentages calculation
-                const wNodes = nodes.filter(n => n.workflowId === w.id);
-                const numTrusted = wNodes.filter(n => n.status === 'trusted').length;
-                const numExperimental = wNodes.filter(n => n.status === 'experimental').length;
-                const numArchived = wNodes.filter(n => n.status === 'archived').length;
-                
-                const pTrusted = wNodes.length > 0 ? Math.round((numTrusted / wNodes.length) * 100) : 0;
-                const pExperimental = wNodes.length > 0 ? Math.round((numExperimental / wNodes.length) * 100) : 0;
-                const pArchived = wNodes.length > 0 ? Math.round((numArchived / wNodes.length) * 100) : 0;
-                
-                return (
-                  <div
-                    key={w.id}
-                    onClick={() => setSelectedWorkflowId(w.id)}
-                    draggable
-                    onDragStart={(e) => {
-                      setDraggedWorkflowId(w.id);
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', w.id);
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                    }}
-                    onDragEnd={() => {
-                      setDraggedWorkflowId(null);
-                      setDragOverWorkflowId(null);
-                    }}
-                    onDragEnter={(e) => {
-                      if (draggedWorkflowId && draggedWorkflowId !== w.id) {
-                        setDragOverWorkflowId(w.id);
-                      }
-                    }}
-                    onDragLeave={() => {
-                      if (dragOverWorkflowId === w.id) {
-                        setDragOverWorkflowId(null);
-                      }
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setDragOverWorkflowId(null);
-                      if (!draggedWorkflowId || draggedWorkflowId === w.id) return;
-                      
-                      const sourceIdx = workflows.findIndex(item => item.id === draggedWorkflowId);
-                      const targetIdx = workflows.findIndex(item => item.id === w.id);
-                      
-                      if (sourceIdx !== -1 && targetIdx !== -1) {
-                        const nextWorkflows = [...workflows];
-                        const [removed] = nextWorkflows.splice(sourceIdx, 1);
-                        nextWorkflows.splice(targetIdx, 0, removed);
-                        
-                        setWorkflows(nextWorkflows);
-                        saveStateToStorage(nextWorkflows, nodes, links, versions);
-                      }
-                      setDraggedWorkflowId(null);
-                    }}
-                    className={`p-3 rounded-lg border-2 cursor-grab active:cursor-grabbing transition-all flex flex-col gap-2 group relative overflow-visible ${
-                      dragOverWorkflowId === w.id 
-                        ? 'border-dashed border-blue-500 bg-blue-50 scale-[0.98]' 
-                        : (isActive 
-                            ? 'bg-blue-50/40 border-blue-600 shadow-[3px_3px_0px_#2563eb]' 
-                            : 'bg-white border-slate-300 hover:border-slate-800 shadow-[2px_2px_0px_transparent] hover:shadow-[2px_2px_0px_#000]')
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                        {/* Avatar initial letters */}
-                        <div className={`w-9 h-9 border border-black rounded flex items-center justify-center font-black font-mono shadow-[1px_1px_0px_#000] text-sm shrink-0 ${
-                          isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {firstLetter}
-                        </div>
-                        
-                        {/* Description column */}
-                        <div className="min-w-0">
-                          <h3 className="text-xs font-extrabold text-black leading-tight truncate">
-                            {w.title}
-                          </h3>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[8px] font-mono font-bold uppercase text-slate-400 truncate max-w-[80px]">
-                              {w.category || 'Architecture'}
-                            </span>
-                            <span className="text-[8px] font-mono font-medium text-slate-300 shrink-0">•</span>
-                            <span className="text-[8px] font-mono text-slate-450 font-bold shrink-0">
-                              {dateStr}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Actions on Hover */}
-                      <div className={`flex items-center gap-1 shrink-0 bg-white border border-slate-200 rounded p-0.5 absolute right-2 top-3 z-10 shadow-[1px_1px_0px_#000] transition-opacity ${
-                        confirmDeleteWorkflowId === w.id ? 'opacity-100 z-20' : 'opacity-0 group-hover:opacity-100'
-                      }`}>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleFavorite(w.id);
-                          }}
-                          className="p-1 hover:bg-slate-100 text-amber-500 rounded cursor-pointer"
-                          title="Set as Favorite"
-                        >
-                          <Star className={`w-3 h-3 ${w.isFavorite ? 'fill-amber-400' : ''}`} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDuplicateWorkflow(w.id);
-                          }}
-                          className="p-1 hover:bg-slate-100 text-blue-600 rounded cursor-pointer"
-                          title="Duplicate Document"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                        
-                        {confirmDeleteWorkflowId === w.id ? (
-                          <div className="flex items-center gap-1 bg-red-50 p-0.5 rounded border border-red-250 animate-fade-in">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteWorkflow(w.id);
-                                setConfirmDeleteWorkflowId(null);
-                              }}
-                              className="bg-red-650 hover:bg-red-700 text-white text-[8px] font-mono font-black px-1.5 py-0.5 rounded shadow-[1px_1px_0px_#000] cursor-pointer"
-                              title="Delete permanently"
-                            >
-                              Sure?
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmDeleteWorkflowId(null);
-                              }}
-                              className="bg-white hover:bg-slate-100 text-slate-700 text-[8px] font-mono font-bold px-1.5 py-0.5 border border-slate-350 rounded cursor-pointer"
-                            >
-                              No
-                            </button>
-                          </div>
-                        ) : (
-                          workflows.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmDeleteWorkflowId(w.id);
-                              }}
-                              className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer"
-                              title="Delete Workspace"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Progress details & colors (Trusted, Experimental, Archived metrics) */}
-                    {wNodes.length > 0 && (
-                      <div className="mt-1 pb-0.5 border-t border-slate-100 pt-1.5 block w-full" id={`w-progress-box-${w.id}`}>
-                        {/* Segmented color bars */}
-                        <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden flex" title={`${pTrusted}% Trusted, ${pExperimental}% Experimental, ${pArchived}% Archived`}>
-                          {numTrusted > 0 && (
-                            <div className="bg-emerald-500 h-full transition-all" style={{ width: `${pTrusted}%` }} />
-                          )}
-                          {numExperimental > 0 && (
-                            <div className="bg-blue-500 h-full transition-all" style={{ width: `${pExperimental}%` }} />
-                          )}
-                          {numArchived > 0 && (
-                            <div className="bg-slate-400 h-full transition-all" style={{ width: `${pArchived}%` }} />
-                          )}
-                        </div>
-                        {/* Small percent list info labels */}
-                        <div className="flex items-center justify-between text-[8px] font-mono font-bold text-slate-500 mt-1">
-                          <span className="text-emerald-600 block shrink-0">{pTrusted}% Trusted</span>
-                          <span className="text-blue-600 block shrink-0">{pExperimental}% Exp</span>
-                          <span className="text-slate-500 block shrink-0">{pArchived}% Arch</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="text-center py-8 text-slate-400 font-mono text-[10px] uppercase border border-dashed border-slate-300 rounded-lg bg-slate-50 p-4">
-                No matching documents
-              </div>
-            )}
-          </div>
-
-          {/* Floating plus to create blank whiteboard */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-center select-none shrink-0">
-            <button
-              onClick={handleInstantCreateWorkflow}
-              className="w-11 h-11 bg-black hover:bg-slate-900 border-2 border-black text-white rounded-full flex items-center justify-center cursor-pointer shadow-[3px_3px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_rgba(0,0,0,1)] active:translate-y-[1px] transition-all"
-              title="Add a new blank document instantly"
-              id="instant-create-btn"
+          {/* Nav Tab Swapping workspaces / queue */}
+          <div className="flex border-b-2 border-black bg-slate-100 select-none shrink-0">
+            <button 
+              onClick={() => setActiveTab('workspaces')}
+              className={`flex-1 py-2 text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
+                activeTab === 'workspaces' 
+                  ? 'bg-white text-black border-r-2 border-black' 
+                  : 'text-slate-500 hover:bg-slate-50 border-r-2 border-black border-b border-black'
+              }`}
             >
-              <Plus className="w-5 h-5" />
+              📁 Workspaces
+            </button>
+            <button 
+              onClick={() => setActiveTab('queue')}
+              className={`flex-1 py-2 text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
+                activeTab === 'queue' 
+                  ? 'bg-white text-black' 
+                  : 'text-slate-500 hover:bg-slate-50 border-b border-black'
+              }`}
+              id="experimental-queue-tab"
+            >
+              ⚡ Inbox Queue ({queueResources.length})
             </button>
           </div>
+
+          {activeTab === 'workspaces' ? (
+            <>
+              {/* Search Box with options indicators */}
+              <div className="p-4 border-b border-slate-200 select-none">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input 
+                    type="text"
+                    placeholder="Search documents..."
+                    value={sidebarSearch}
+                    onChange={(e) => setSidebarSearch(e.target.value)}
+                    className="w-full bg-slate-50 border-2 border-black rounded-lg pl-8 pr-10 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white"
+                    id="sidebar-search-box"
+                  />
+                  
+                  <div className="absolute right-2.5 top-2.5 flex items-center gap-1 text-slate-400">
+                    <span title="Config view"><SlidersHorizontal className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
+                    <span title="Invite partners"><UserPlus className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Domain Category Horizontal Pills Selector (Issue #1 Solution) */}
+              <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 select-none">
+                <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-widest mb-1.5">Project Scopes:</span>
+                
+                <div className="flex flex-wrap gap-1 max-h-[72px] overflow-y-auto pr-1 overflow-x-hidden">
+                  <button
+                    onClick={() => setSidebarCatFilter('All')}
+                    className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer ${
+                      sidebarCatFilter === 'All'
+                        ? 'bg-blue-600 text-white border-black font-black shadow-[1px_1px_0px_#000]'
+                        : 'bg-white hover:bg-slate-100 text-slate-655 border-slate-300'
+                    }`}
+                  >
+                    All
+                  </button>
+                  
+                  {Array.from(new Set(workflows.map(w => w.category).filter(Boolean))).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSidebarCatFilter(cat)}
+                      className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer ${
+                        sidebarCatFilter === cat
+                          ? 'bg-blue-600 text-white border-black font-black shadow-[1px_1px_0px_#000]'
+                          : 'bg-white hover:bg-slate-100 text-slate-655 border-slate-300'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Workspaces Scrollable List */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-2 select-none" id="sidebar-documents-list">
+                <span className="block text-[8px] font-mono font-extrabold text-slate-400 uppercase tracking-widest mb-1">Documents ({listableWorkflows.length}):</span>
+                
+                {listableWorkflows.length > 0 ? (
+                  listableWorkflows.map((w) => {
+                    const isActive = w.id === selectedWorkflowId;
+                    const firstLetter = w.title ? w.title.charAt(0).toUpperCase() : 'W';
+                    const dateStr = new Date(w.updatedAt || w.createdAt).toLocaleDateString(undefined, { 
+                      month: 'short', 
+                      day: 'numeric' 
+                    });
+
+                    // Status percentages calculation
+                    const wNodes = nodes.filter(n => n.workflowId === w.id);
+                    const numTrusted = wNodes.filter(n => n.status === 'trusted').length;
+                    const numExperimental = wNodes.filter(n => n.status === 'experimental').length;
+                    const numArchived = wNodes.filter(n => n.status === 'archived').length;
+                    
+                    const pTrusted = wNodes.length > 0 ? Math.round((numTrusted / wNodes.length) * 100) : 0;
+                    const pExperimental = wNodes.length > 0 ? Math.round((numExperimental / wNodes.length) * 100) : 0;
+                    const pArchived = wNodes.length > 0 ? Math.round((numArchived / wNodes.length) * 100) : 0;
+                    
+                    return (
+                      <div
+                        key={w.id}
+                        onClick={() => setSelectedWorkflowId(w.id)}
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedWorkflowId(w.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', w.id);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                        }}
+                        onDragEnd={() => {
+                          setDraggedWorkflowId(null);
+                          setDragOverWorkflowId(null);
+                        }}
+                        onDragEnter={(e) => {
+                          if (draggedWorkflowId && draggedWorkflowId !== w.id) {
+                            setDragOverWorkflowId(w.id);
+                          }
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverWorkflowId === w.id) {
+                            setDragOverWorkflowId(null);
+                          }
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setDragOverWorkflowId(null);
+                          if (!draggedWorkflowId || draggedWorkflowId === w.id) return;
+                          
+                          const sourceIdx = workflows.findIndex(item => item.id === draggedWorkflowId);
+                          const targetIdx = workflows.findIndex(item => item.id === w.id);
+                          
+                          if (sourceIdx !== -1 && targetIdx !== -1) {
+                            const nextWorkflows = [...workflows];
+                            const [removed] = nextWorkflows.splice(sourceIdx, 1);
+                            nextWorkflows.splice(targetIdx, 0, removed);
+                            
+                            setWorkflows(nextWorkflows);
+                            saveStateToStorage(nextWorkflows, nodes, links, versions);
+                          }
+                          setDraggedWorkflowId(null);
+                        }}
+                        className={`p-3 rounded-lg border-2 cursor-grab active:cursor-grabbing transition-all flex flex-col gap-2 group relative overflow-visible ${
+                          dragOverWorkflowId === w.id 
+                            ? 'border-dashed border-blue-500 bg-blue-50 scale-[0.98]' 
+                            : (isActive 
+                                ? 'bg-blue-50/40 border-blue-600 shadow-[3px_3px_0px_#2563eb]' 
+                                : 'bg-white border-slate-300 hover:border-slate-800 shadow-[2px_2px_0px_transparent] hover:shadow-[2px_2px_0px_#000]')
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                            {/* Avatar initial letters */}
+                            <div className={`w-9 h-9 border border-black rounded flex items-center justify-center font-black font-mono shadow-[1px_1px_0px_#000] text-sm shrink-0 ${
+                              isActive ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'
+                            }`}>
+                              {firstLetter}
+                            </div>
+                            
+                            {/* Description column */}
+                            <div className="min-w-0">
+                              <h3 className="text-xs font-extrabold text-black leading-tight truncate font-sans">
+                                {w.title}
+                              </h3>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className="text-[8px] font-mono font-bold uppercase text-slate-400 truncate max-w-[80px]">
+                                  {w.category || 'Architecture'}
+                                </span>
+                                <span className="text-[8px] font-mono font-medium text-slate-300 shrink-0">•</span>
+                                <span className="text-[8px] font-mono text-slate-450 font-bold shrink-0">
+                                  {dateStr}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Actions on Hover */}
+                          <div className={`flex items-center gap-1 shrink-0 bg-white border border-slate-200 rounded p-0.5 absolute right-2 top-3 z-10 shadow-[1px_1px_0px_#000] transition-opacity ${
+                            confirmDeleteWorkflowId === w.id ? 'opacity-100 z-20' : 'opacity-0 group-hover:opacity-100'
+                          }`}>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleFavorite(w.id);
+                              }}
+                              className="p-1 hover:bg-slate-100 text-amber-500 rounded cursor-pointer"
+                              title="Set as Favorite"
+                            >
+                              <Star className={`w-3 h-3 ${w.isFavorite ? 'fill-amber-400' : ''}`} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDuplicateWorkflow(w.id);
+                              }}
+                              className="p-1 hover:bg-slate-100 text-blue-600 rounded cursor-pointer"
+                              title="Duplicate Document"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                            
+                            {confirmDeleteWorkflowId === w.id ? (
+                              <div className="flex items-center gap-1 bg-red-50 p-0.5 rounded border border-red-250 animate-fade-in">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteWorkflow(w.id);
+                                    setConfirmDeleteWorkflowId(null);
+                                  }}
+                                  className="bg-red-650 hover:bg-red-700 text-white text-[8px] font-mono font-black px-1.5 py-0.5 rounded shadow-[1px_1px_0px_#000] cursor-pointer"
+                                  title="Delete permanently"
+                                >
+                                  Sure?
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteWorkflowId(null);
+                                  }}
+                                  className="bg-white hover:bg-slate-100 text-slate-700 text-[8px] font-mono font-bold px-1.5 py-0.5 border border-slate-350 rounded cursor-pointer"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              workflows.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteWorkflowId(w.id);
+                                  }}
+                                  className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer"
+                                  title="Delete Workspace"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Progress details & colors (Trusted, Experimental, Archived metrics) */}
+                        {wNodes.length > 0 && (
+                          <div className="mt-1 pb-0.5 border-t border-slate-100 pt-1.5 block w-full" id={`w-progress-box-${w.id}`}>
+                            {/* Segmented color bars */}
+                            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden flex" title={`${pTrusted}% Trusted, ${pExperimental}% Experimental, ${pArchived}% Archived`}>
+                              {numTrusted > 0 && (
+                                <div className="bg-emerald-500 h-full transition-all" style={{ width: `${pTrusted}%` }} />
+                              )}
+                              {numExperimental > 0 && (
+                                <div className="bg-blue-500 h-full transition-all" style={{ width: `${pExperimental}%` }} />
+                              )}
+                              {numArchived > 0 && (
+                                <div className="bg-slate-400 h-full transition-all" style={{ width: `${pArchived}%` }} />
+                              )}
+                            </div>
+                            {/* Small percent list info labels */}
+                            <div className="flex items-center justify-between text-[8px] font-mono font-bold text-slate-500 mt-1">
+                              <span className="text-emerald-600 block shrink-0">{pTrusted}% Trusted</span>
+                              <span className="text-blue-600 block shrink-0">{pExperimental}% Exp</span>
+                              <span className="text-slate-500 block shrink-0">{pArchived}% Arch</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 text-slate-400 font-mono text-[10px] uppercase border border-dashed border-slate-300 rounded-lg bg-slate-50 p-4">
+                    No matching documents
+                  </div>
+                )}
+              </div>
+
+              {/* Floating plus to create blank whiteboard */}
+              <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-center select-none shrink-0">
+                <button
+                  onClick={handleInstantCreateWorkflow}
+                  className="w-11 h-11 bg-black hover:bg-slate-900 border-2 border-black text-white rounded-full flex items-center justify-center cursor-pointer shadow-[3px_3px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_rgba(0,0,0,1)] active:translate-y-[1px] transition-all"
+                  title="Add a new blank document instantly"
+                  id="instant-create-btn"
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 p-4 overflow-y-auto space-y-4 select-none font-mono text-[10px] text-slate-500 bg-slate-50/20" id="queue-status-sidebar-panel">
+              <div className="border-2 border-black bg-white rounded-lg p-3 space-y-2.5 shadow-[2px_2px_0px_rgba(0,0,0,1)] animate-fade-in">
+                <span className="block text-[8px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-100 pb-1">Inbox Progress Matrix:</span>
+                <div className="space-y-2 pt-1">
+                  <div className="flex justify-between font-bold text-black border-b border-dashed border-slate-100 pb-1">
+                    <span>Pending Inbox:</span>
+                    <span className="text-amber-600 px-1.5 bg-amber-50 border border-amber-200 rounded">{queueResources.filter(r => r.status === 'inbox').length} items</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-black border-b border-dashed border-slate-100 pb-1">
+                    <span>Experimental:</span>
+                    <span className="text-blue-600 px-1.5 bg-blue-50 border border-blue-200 rounded">{queueResources.filter(r => r.status === 'experimental').length} items</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-black border-b border-dashed border-slate-100 pb-1">
+                    <span>Certified Trusted:</span>
+                    <span className="text-emerald-600 px-1.5 bg-emerald-50 border border-emerald-200 rounded">{queueResources.filter(r => r.status === 'trusted').length} items</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-black border-b border-dashed border-slate-100 pb-1">
+                    <span>Tested or Archived:</span>
+                    <span className="text-slate-600 px-1.5 bg-slate-50 border border-slate-200 rounded">{queueResources.filter(r => r.status === 'tested' || r.status === 'archived').length} items</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-blue-50/50 border border-blue-200 text-blue-700 text-[10px] leading-relaxed rounded-lg animate-fade-in">
+                💡 <strong>Tip:</strong> Keep workflows focused by moving useful tools and tested links straight onto visual diagrams using the Move feature!
+              </div>
+            </div>
+          )}
 
         </div>
       ) : null}
@@ -888,7 +1134,19 @@ export default function App() {
           </button>
         ) : null}
 
-        {activeWorkflow ? (
+        {activeTab === 'queue' ? (
+          <ExperimentalQueue 
+            workflows={workflows}
+            resources={queueResources}
+            reviews={queueReviews}
+            linksToNodes={queueLinks}
+            onAddResource={handleAddQueueResource}
+            onUpdateResource={handleUpdateQueueResource}
+            onDeleteResource={handleDeleteQueueResource}
+            onAddReview={handleAddResourceReview}
+            onMoveToWorkflow={handleMoveResourceToWorkflow}
+          />
+        ) : activeWorkflow ? (
           <>
             {/* Elegant Floating Top Title & Config Bar (Google Docs/Weje Style) */}
             <div 
@@ -930,7 +1188,7 @@ export default function App() {
                 {/* Info / Description Modal Trigger */}
                 <button
                   onClick={() => setShowInfoModal(true)}
-                  className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded text-slate-600 hover:text-black flex items-center gap-1 cursor-pointer transition-colors text-[9px] font-mono font-bold"
+                  className="p-1 px-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded text-slate-650 hover:text-black flex items-center gap-1 cursor-pointer transition-colors text-[9px] font-mono font-bold"
                   title="Inspect goals mission description details"
                 >
                   <BookOpen className="w-3 h-3 text-slate-600" />
@@ -997,6 +1255,8 @@ export default function App() {
                 onRedo={handleRedo}
                 canUndo={undoStack.length > 0}
                 canRedo={redoStack.length > 0}
+                queueLinks={queueLinks}
+                queueResources={queueResources}
               />
             </div>
           </>
@@ -1014,7 +1274,7 @@ export default function App() {
       </div>
 
       {/* 3. SPLITTED COLLAPSIBLE RIGHT SIDEBAR FOR DETAILED NODE INSPECTION */}
-      {selectedNodeId && activeSelectedNode && showCanvasSidebar ? (
+      {activeTab === 'workspaces' && selectedNodeId && activeSelectedNode && showCanvasSidebar ? (
         <div className="w-80 md:w-96 bg-white border-l-2 border-black flex flex-col h-full shrink-0 z-25 shadow-[-4px_0_0_rgba(0,0,0,0.05)]" id="sidebar-inspector-row">
           
           {/* Collapse inspector panel layout wrapper */}
@@ -1037,6 +1297,8 @@ export default function App() {
               onUpdateNode={(node) => handleUpdateNodeData(node.id, node)}
               onDeleteNode={handleDeleteNode}
               onClose={() => setSelectedNodeId(null)}
+              queueLinks={queueLinks}
+              queueResources={queueResources}
             />
           </div>
         </div>

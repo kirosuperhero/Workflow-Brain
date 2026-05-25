@@ -3,7 +3,9 @@ import {
   WorkflowNode, 
   NodeLink, 
   NodeType, 
-  NodeStatus 
+  NodeStatus,
+  QueueResource,
+  ResourceLinkToNode
 } from '../types';
 import { 
   Plus, 
@@ -53,6 +55,8 @@ interface CanvasProps {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  queueLinks?: ResourceLinkToNode[];
+  queueResources?: QueueResource[];
 }
 
 // Precompute smart alignment search offsets sorted by Euclidean distance
@@ -89,7 +93,9 @@ export default function Canvas({
   onUndo,
   onRedo,
   canUndo,
-  canRedo
+  canRedo,
+  queueLinks = [],
+  queueResources = []
 }: CanvasProps) {
   // Navigation: Panning and Zooming
   const [pan, setPan] = useState({ x: 50, y: 50 });
@@ -1425,6 +1431,26 @@ export default function Canvas({
                       {node.title || <span className="italic text-slate-400 font-medium">Untitled Node</span>}
                     </h3>
 
+                    {(() => {
+                      const matchingQueueLink = queueLinks.find(l => l.nodeId === node.id);
+                      const matchingQueueResource = matchingQueueLink ? queueResources.find(r => r.id === matchingQueueLink.resourceId) : null;
+
+                      if (!matchingQueueResource) return null;
+                      return (
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="mt-1.5 flex items-center gap-1 text-[8px] font-mono font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 hover:border-purple-300 rounded px-1.5 py-0.5 select-none w-max max-w-full pointer-events-auto transition-all cursor-help" 
+                          title={`Linked Experimental Inbox Resource: ${matchingQueueResource.title}\nClick the Maximize/Expand Notebook icon or see Inspector to view details.`}
+                        >
+                          <span className="shrink-0">⚡ INBOX:</span>
+                          <span className="truncate">{matchingQueueResource.title}</span>
+                        </div>
+                      );
+                    })()}
+
                     {/* Image rendering inside image nodes */}
                     {node.type === 'image' && node.content && (
                       <div 
@@ -1686,6 +1712,43 @@ export default function Canvas({
                       id="notepad-title-text-field"
                     />
                   </div>
+
+                  {(() => {
+                    const matchingQueueLinkCurrent = queueLinks.find(l => l.nodeId === activeExpandedNodeCurrent.id);
+                    const matchingQueueResourceCurrent = matchingQueueLinkCurrent ? queueResources.find(r => r.id === matchingQueueLinkCurrent.resourceId) : null;
+
+                    if (!matchingQueueResourceCurrent) return null;
+                    return (
+                      <div className="bg-purple-50 border-2 border-purple-200 p-3 rounded-lg flex flex-col gap-1 select-none animate-fade-in text-[11px] font-mono text-purple-950">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold uppercase tracking-wide text-[9px] text-purple-700 flex items-center gap-1">
+                            ⚡ LINKED EXPERIMENTAL INBOX RESOURCE
+                          </span>
+                          <span className="text-[8px] bg-purple-100 border border-purple-300 px-1 py-0.5 rounded uppercase font-black">
+                            {matchingQueueResourceCurrent.type}
+                          </span>
+                        </div>
+                        <div className="font-bold text-black text-xs font-sans mt-1">
+                          {matchingQueueResourceCurrent.title}
+                        </div>
+                        {matchingQueueResourceCurrent.shortSummary && (
+                          <div className="text-[10px] text-purple-800 mt-0.5 leading-relaxed font-sans">
+                            {matchingQueueResourceCurrent.shortSummary}
+                          </div>
+                        )}
+                        {matchingQueueResourceCurrent.url && (
+                          <a 
+                            href={matchingQueueResourceCurrent.url} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="inline-flex items-center gap-1 mt-2 font-bold text-purple-600 hover:text-purple-900 border border-purple-300 hover:border-purple-600 rounded bg-white px-2 py-0.5 self-start text-[9px] pointer-events-auto"
+                          >
+                            🔗 Launch Original Source
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div className="flex-1 flex flex-col gap-1 min-h-[250px]" id="notepad-desc-input-section">
                     <div className="flex items-center justify-between">

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { WorkflowNode, NodeLink, NodeType, NodeStatus, NodeReview, Tag } from '../types';
+import { WorkflowNode, NodeLink, NodeType, NodeStatus, NodeReview, Tag, QueueResource, ResourceLinkToNode } from '../types';
 import { 
   X, 
   Sparkles, 
@@ -29,6 +29,8 @@ interface SidebarProps {
   onUpdateNode: (node: WorkflowNode) => void;
   onDeleteNode: (nodeId: string) => void;
   onClose: () => void;
+  queueLinks?: ResourceLinkToNode[];
+  queueResources?: QueueResource[];
 }
 
 export default function Sidebar({
@@ -37,10 +39,15 @@ export default function Sidebar({
   links,
   onUpdateNode,
   onDeleteNode,
-  onClose
+  onClose,
+  queueLinks = [],
+  queueResources = []
 }: SidebarProps) {
   const selectedNode = node;
   const allLinks = links;
+  
+  const matchingQueueLink = selectedNode ? queueLinks.find(l => l.nodeId === selectedNode.id) : null;
+  const matchingQueueResource = matchingQueueLink ? queueResources.find(r => r.id === matchingQueueLink.resourceId) : null;
   
   // Local click selector stub
   const onSelectNode = (targetId: string | null) => {
@@ -211,6 +218,37 @@ export default function Sidebar({
                 <X className="w-4 h-4" />
               </button>
             </div>
+
+            {matchingQueueResource && (
+              <div className="bg-purple-50 border-2 border-purple-200 p-3 rounded-lg flex flex-col gap-1 select-none animate-fade-in text-[11px] font-mono text-purple-950">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold uppercase tracking-wide text-[9px] text-purple-700 flex items-center gap-1">
+                    ⚡ LINKED INBOX RESOURCE
+                  </span>
+                  <span className="text-[8px] bg-purple-100 border border-purple-300 px-1 py-0.5 rounded uppercase font-black">
+                    {matchingQueueResource.type}
+                  </span>
+                </div>
+                <div className="font-bold text-black text-xs font-sans mt-1">
+                  {matchingQueueResource.title}
+                </div>
+                {matchingQueueResource.shortSummary && (
+                  <div className="text-[10px] text-purple-800 line-clamp-2 mt-0.5 leading-relaxed font-sans">
+                    {matchingQueueResource.shortSummary}
+                  </div>
+                )}
+                {matchingQueueResource.url && (
+                  <a 
+                    href={matchingQueueResource.url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="inline-flex items-center gap-1 mt-2 font-bold text-purple-600 hover:text-purple-900 border border-purple-300 hover:border-purple-600 rounded bg-white px-2 py-0.5 self-start text-[9px]"
+                  >
+                    🔗 Launch Original Source
+                  </a>
+                )}
+              </div>
+            )}
 
             {/* Title Form Field */}
             <div>

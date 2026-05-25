@@ -64,3 +64,37 @@ export interface NodeReview {
   notes: string;
   createdAt: string;
 }
+
+export type ResourceType = 'article' | 'video' | 'tool' | 'note' | 'link';
+export type ResourceStatus = 'inbox' | 'experimental' | 'tested' | 'trusted' | 'archived' | 'deleted';
+
+export interface QueueResource {
+  id: string;
+  title: string;
+  url: string;
+  type: ResourceType;
+  shortSummary: string;
+  tags: string[];
+  rating: number; // 0 to 5
+  notes: string;
+  status: ResourceStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResourceReview {
+  id: string;
+  resourceId: string;
+  reviewedAt: string;
+  notes: string;
+  isUseful: boolean;
+}
+
+export interface ResourceLinkToNode {
+  id: string;
+  resourceId: string;
+  workflowId: string;
+  nodeId: string;
+  linkedAt: string;
+}
+
