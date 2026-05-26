@@ -631,15 +631,17 @@ export default function App() {
   };
 
   const handleAddQueueResource = (resource: Omit<QueueResource, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newRes: QueueResource = {
-      ...resource,
-      id: `queue-res-${generateId()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    const nextResources = [newRes, ...queueResources];
-    setQueueResources(nextResources);
-    saveQueueStateToStorage(nextResources, queueReviews, queueLinks);
+    setQueueResources(prev => {
+      const newRes: QueueResource = {
+        ...resource,
+        id: `queue-res-${generateId()}`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const nextResources = [newRes, ...prev];
+      saveQueueStateToStorage(nextResources, queueReviews, queueLinks);
+      return nextResources;
+    });
   };
 
   const handleUpdateQueueResource = (id: string, updatedFields: Partial<QueueResource>) => {
