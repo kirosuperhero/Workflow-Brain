@@ -47,7 +47,8 @@ import {
   ChevronRight,
   Sliders,
   LayoutDashboard,
-  Layout
+  Layout,
+  Tag
 } from 'lucide-react';
 
 const LOCAL_STORAGE_PREFIX = 'workflow_brain_v2';
@@ -130,6 +131,33 @@ export default function App() {
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [sidebarCatFilter, setSidebarCatFilter] = useState('All');
+
+  // Search history & suggestions state
+  const [recentQueries, setRecentQueries] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('sidebar_recent_queries');
+      return stored ? JSON.parse(stored) : ['architecture', 'ai pipeline', 'database schema', 'saas dev', 'devops'];
+    } catch {
+      return ['architecture', 'ai pipeline', 'database schema', 'saas dev', 'devops'];
+    }
+  });
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  const addRecentQuery = (query: string) => {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return;
+    setRecentQueries(prev => {
+      const next = [trimmed, ...prev.filter(q => q !== trimmed)].slice(0, 8); // Keep up to 8
+      localStorage.setItem('sidebar_recent_queries', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      addRecentQuery(sidebarSearch);
+    }
+  };
 
   // Deletion & drag reordering states
   const [confirmDeleteWorkflowId, setConfirmDeleteWorkflowId] = useState<string | null>(null);
@@ -529,6 +557,22 @@ export default function App() {
     saveStateToStorage(workflows, nextNodes, links, versions);
   };
 
+  const handleRemoveTagGlobally = (tagToRemove: string) => {
+    pushToHistory(nodes, links);
+    const nextNodes = nodes.map(n => {
+      if (n.tags && Array.isArray(n.tags) && n.tags.includes(tagToRemove)) {
+        return {
+          ...n,
+          tags: n.tags.filter(t => t !== tagToRemove),
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return n;
+    });
+    setNodes(nextNodes);
+    saveStateToStorage(workflows, nextNodes, links, versions);
+  };
+
   const handleAddNode = (node: Omit<WorkflowNode, 'id' | 'createdAt' | 'updatedAt'>) => {
     pushToHistory(nodes, links);
     const freshId = `node-n-${generateId()}`;
@@ -732,6 +776,34 @@ export default function App() {
     setSelectedNodeId(createdNodeId);
   };
 
+  const handleDuplicateNodeToWorkflow = (nodeId: string, targetWorkflowId: string) => {
+    const originalNode = nodes.find(n => n.id === nodeId);
+    if (!originalNode) return;
+
+    const clonedNodeData: Omit<WorkflowNode, 'id' | 'createdAt' | 'updatedAt'> = {
+      workflowId: targetWorkflowId,
+      type: originalNode.type,
+      title: `${originalNode.title} (Copy)`,
+      content: originalNode.content,
+      summary: originalNode.summary,
+      confidenceScore: originalNode.confidenceScore,
+      rating: originalNode.rating,
+      status: originalNode.status,
+      positionX: originalNode.positionX + 40,
+      positionY: originalNode.positionY + 40,
+      tags: [...originalNode.tags],
+      sourceTitle: originalNode.sourceTitle,
+      sourceUrl: originalNode.sourceUrl,
+      pricingTier: originalNode.pricingTier,
+      approximateUses: originalNode.approximateUses
+    };
+
+    const duplicateId = handleAddNode(clonedNodeData);
+
+    setSelectedWorkflowId(targetWorkflowId);
+    setSelectedNodeId(duplicateId);
+  };
+
   // Nav calculations
   const activeWorkflow = workflows.find(w => w.id === selectedWorkflowId);
   const activeWorkflowNodes = nodes.filter(n => n.workflowId === selectedWorkflowId);
@@ -751,7 +823,10 @@ export default function App() {
   };
 
   const listableWorkflows = workflows.filter(w => {
-    if (sidebarCatFilter !== 'All' && w.category !== sidebarCatFilter) return false;
+    if (sidebarCatFilter !== 'All') {
+      const wTags = (w.category || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!wTags.includes(sidebarCatFilter)) return false;
+    }
     if (sidebarSearch.trim() !== '') {
       const q = sidebarSearch.toLowerCase();
       return w.title.toLowerCase().includes(q) || w.description.toLowerCase().includes(q) || (w.category && w.category.toLowerCase().includes(q));
@@ -825,17 +900,256 @@ export default function App() {
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                   <input 
                     type="text"
-                    placeholder="Search documents..."
+                    placeholder="Search documents, tags, URLs..."
                     value={sidebarSearch}
                     onChange={(e) => setSidebarSearch(e.target.value)}
+                    onFocus={() => setIsSearchFocused(true)}
+                    onBlur={() => setTimeout(() => setIsSearchFocused(false), 220)}
+                    onKeyDown={handleSearchKeyDown}
                     className="w-full bg-slate-50 border-2 border-black rounded-lg pl-8 pr-10 py-1.5 text-xs font-semibold text-slate-800 outline-none focus:bg-white"
                     id="sidebar-search-box"
+                    autoComplete="off"
                   />
                   
                   <div className="absolute right-2.5 top-2.5 flex items-center gap-1 text-slate-400">
                     <span title="Config view"><SlidersHorizontal className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
                     <span title="Invite partners"><UserPlus className="w-3.5 h-3.5 hover:text-black cursor-pointer" /></span>
                   </div>
+
+                  {isSearchFocused && (
+                    <div 
+                      className="absolute left-0 right-0 top-full mt-2 bg-white border-2 border-black rounded-lg shadow-[4px_4px_0px_#000] z-50 overflow-hidden max-h-[350px] overflow-y-auto"
+                      id="search-suggestions-dropdown"
+                    >
+                      {/* 1. Tag auto-completions section */}
+                      <div className="bg-slate-50 border-b border-slate-100 p-2">
+                        <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-wider mb-1.5">🏷️ Suggested Domains/Tags</span>
+                        <div className="flex flex-wrap gap-1">
+                          {(() => {
+                            const allUniqueTags = Array.from(new Set([
+                              ...workflows.flatMap(w => (w.category || '').split(',').map(s => s.trim()).filter(Boolean)),
+                              ...nodes.flatMap(n => n.tags || []),
+                              ...queueResources.flatMap(r => r.tags || [])
+                            ])).filter(Boolean);
+                            
+                            const queryLower = sidebarSearch.trim().toLowerCase();
+                            const matching = queryLower 
+                              ? allUniqueTags.filter(t => t.toLowerCase().includes(queryLower)).slice(0, 6)
+                              : allUniqueTags.slice(0, 6);
+
+                            if (matching.length === 0) {
+                              return <span className="text-[9px] font-mono text-slate-400">No matching tags</span>;
+                            }
+
+                            return matching.map(tg => (
+                              <button
+                                key={tg}
+                                type="button"
+                                onMouseDown={() => {
+                                  setSidebarSearch(tg);
+                                  addRecentQuery(tg);
+                                }}
+                                className="px-1.5 py-0.5 text-[9px] font-mono font-bold bg-white hover:bg-slate-200 border border-slate-300 rounded shadow-xs text-slate-700 cursor-pointer flex items-center gap-1 transition-all"
+                              >
+                                <Tag className="w-2.5 h-2.5 text-blue-500" />
+                                <span>{tg}</span>
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                      {/* 2. Recent search queries */}
+                      {recentQueries.length > 0 && (
+                        <div className="border-b border-slate-100 py-1.5">
+                          <div className="flex items-center justify-between px-3 pb-1">
+                            <span className="text-[8px] font-mono font-black text-slate-400 uppercase tracking-wider">🕒 Recent Searches</span>
+                            <button
+                              type="button"
+                              onMouseDown={(ev) => {
+                                ev.preventDefault();
+                                ev.stopPropagation();
+                                setRecentQueries([]);
+                                localStorage.setItem('sidebar_recent_queries', JSON.stringify([]));
+                              }}
+                              className="text-[8px] font-mono font-bold text-red-500 hover:text-red-700 uppercase cursor-pointer"
+                            >
+                              Clear All
+                            </button>
+                          </div>
+                          <div className="space-y-0.5">
+                            {recentQueries.map((rq, idx) => (
+                              <div key={idx} className="flex items-center justify-between px-3 py-0.5 hover:bg-slate-50">
+                                <button
+                                  type="button"
+                                  onMouseDown={() => {
+                                    setSidebarSearch(rq);
+                                    addRecentQuery(rq);
+                                  }}
+                                  className="flex-1 text-left py-0.5 text-[10px] font-mono font-black text-slate-600 hover:text-blue-600 truncate cursor-pointer"
+                                >
+                                  {rq}
+                                </button>
+                                <button
+                                  type="button"
+                                  onMouseDown={(ev) => {
+                                    ev.preventDefault();
+                                    ev.stopPropagation();
+                                    setRecentQueries(prev => {
+                                      const next = prev.filter(q => q !== rq);
+                                      localStorage.setItem('sidebar_recent_queries', JSON.stringify(next));
+                                      return next;
+                                    });
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-red-500 rounded cursor-pointer"
+                                  title="Remove query"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3. Matching Workspace Cards & Node Titles */}
+                      {(() => {
+                        const queryLower = sidebarSearch.trim().toLowerCase();
+                        if (!queryLower) return null;
+
+                        const matchingWF = workflows.filter(w => 
+                          w.title.toLowerCase().includes(queryLower) || 
+                          (w.description && w.description.toLowerCase().includes(queryLower))
+                        ).slice(0, 3);
+
+                        const matchingND = nodes.filter(n => 
+                          n.title.toLowerCase().includes(queryLower) || 
+                          (n.content && n.content.toLowerCase().includes(queryLower))
+                        ).slice(0, 3);
+
+                        if (matchingWF.length === 0 && matchingND.length === 0) return null;
+
+                        return (
+                          <div className="border-b border-slate-100 py-1.5 bg-slate-50/30">
+                            <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-wider px-3 pb-1">📝 Matching Cards & Workspaces</span>
+                            
+                            <div className="space-y-0.5">
+                              {/* Workspaces */}
+                              {matchingWF.map(w => (
+                                <button
+                                  key={w.id}
+                                  type="button"
+                                  onMouseDown={() => {
+                                    setSelectedWorkflowId(w.id);
+                                    addRecentQuery(w.title);
+                                  }}
+                                  className="w-full text-left px-3 py-1 hover:bg-slate-100 flex flex-col border-b border-dotted border-slate-100 last:border-b-0 cursor-pointer"
+                                >
+                                  <span className="text-[10px] font-black text-slate-800 truncate flex items-center gap-1">
+                                    <LayoutDashboard className="w-3" style={{ height: '12px' }} />
+                                    <span>{w.title}</span>
+                                  </span>
+                                  <span className="text-[8px] text-slate-400 truncate pl-4">
+                                    Workspace • {(w.category || 'Architecture').split(',')[0]}
+                                  </span>
+                                </button>
+                              ))}
+
+                              {/* Nodes on Whiteboard */}
+                              {matchingND.map(n => {
+                                const targetWf = workflows.find(w => w.id === n.workflowId);
+                                return (
+                                  <button
+                                    key={n.id}
+                                    type="button"
+                                    onMouseDown={() => {
+                                      setSelectedWorkflowId(n.workflowId);
+                                      setSelectedNodeId(n.id);
+                                      addRecentQuery(n.title);
+                                    }}
+                                    className="w-full text-left px-3 py-1 hover:bg-slate-100 flex flex-col border-b border-dotted border-slate-100 last:border-b-0 cursor-pointer"
+                                  >
+                                    <span className="text-[10px] font-bold text-slate-700 truncate flex items-center gap-1">
+                                      <Brain className="w-3" style={{ height: '12px' }} />
+                                      <span>{n.title}</span>
+                                    </span>
+                                    <span className="text-[8px] text-slate-400 truncate pl-4">
+                                      Card in Workspace: <span className="font-semibold text-slate-600">{targetWf ? targetWf.title : 'Architecture'}</span>
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* 4. External source URLs matches */}
+                      {(() => {
+                        const queryLower = sidebarSearch.trim().toLowerCase();
+                        if (!queryLower) return null;
+
+                        const sourceUrlsFromNodes = nodes.filter(n => n.sourceUrl && n.sourceUrl.toLowerCase().includes(queryLower)).map(n => ({
+                          title: n.sourceTitle || n.title || 'Source URL',
+                          url: n.sourceUrl!,
+                          workflowId: n.workflowId,
+                          nodeId: n.id,
+                          context: 'Whiteboard Card Link'
+                        }));
+
+                        const sourceUrlsFromQueue = queueResources.filter(r => r.url && r.url.toLowerCase().includes(queryLower)).map(r => ({
+                          title: r.title || 'Queue Connection',
+                          url: r.url,
+                          workflowId: null,
+                          nodeId: r.id,
+                          context: 'Inbox Link'
+                        }));
+
+                        const combinedUrls = [...sourceUrlsFromNodes, ...sourceUrlsFromQueue].slice(0, 4);
+
+                        if (combinedUrls.length === 0) return null;
+
+                        return (
+                          <div className="py-1.5">
+                            <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-wider px-3 pb-1">🌐 Matching Source URLs</span>
+                            <div className="space-y-0.5">
+                              {combinedUrls.map((ur, uIdx) => (
+                                <a
+                                  key={uIdx}
+                                  href={ur.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onMouseDown={(e) => {
+                                    // Let it open normally, but register the query and selection
+                                    addRecentQuery(ur.title);
+                                    if (ur.workflowId) {
+                                      setSelectedWorkflowId(ur.workflowId);
+                                      if (ur.nodeId) {
+                                        setSelectedNodeId(ur.nodeId);
+                                      }
+                                    }
+                                  }}
+                                  className="block px-3 py-1 hover:bg-slate-100 border-b border-dotted border-slate-150 last:border-b-0 cursor-pointer"
+                                >
+                                  <div className="text-[10px] font-black text-slate-800 truncate flex items-center gap-1.5">
+                                    <ExternalLink className="w-2.5 h-2.5 text-emerald-650 shrink-0" />
+                                    <span>{ur.title}</span>
+                                  </div>
+                                  <div className="text-[8px] font-mono text-slate-450 truncate pl-4 leading-normal">
+                                    {ur.url}
+                                  </div>
+                                  <div className="flex items-center gap-1 pl-4 mt-0.5">
+                                    <span className="text-[7.5px] uppercase font-mono px-1 py-0.2 bg-emerald-50 border border-emerald-105 text-emerald-700 rounded scale-95">
+                                      {ur.context}
+                                    </span>
+                                  </div>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -855,7 +1169,9 @@ export default function App() {
                     All
                   </button>
                   
-                  {Array.from(new Set(workflows.map(w => w.category).filter(Boolean))).map((cat) => (
+                  {Array.from(new Set(
+                    workflows.flatMap(w => (w.category || '').split(',').map(s => s.trim()).filter(Boolean))
+                  )).map((cat) => (
                     <button
                       key={cat}
                       onClick={() => setSidebarCatFilter(cat)}
@@ -962,8 +1278,9 @@ export default function App() {
                                 {w.title}
                               </h3>
                               <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[8px] font-mono font-bold uppercase text-slate-400 truncate max-w-[80px]">
-                                  {w.category || 'Architecture'}
+                                <span className="text-[8px] font-mono font-bold uppercase text-slate-400 truncate max-w-[120px]" title={w.category}>
+                                  {w.category ? w.category.split(',')[0].trim() : 'Architecture'}
+                                  {w.category && w.category.split(',').length > 1 ? ` +${w.category.split(',').length - 1}` : ''}
                                 </span>
                                 <span className="text-[8px] font-mono font-medium text-slate-300 shrink-0">•</span>
                                 <span className="text-[8px] font-mono text-slate-450 font-bold shrink-0">
@@ -1174,15 +1491,15 @@ export default function App() {
                 <span className="text-slate-300 text-[10px] select-none shrink-0 border-l border-slate-200 h-4 pl-2">|</span>
 
                 {/* Inline Domain Category select to edit domain tags on-the-fly! (Issue #1 Solution!) */}
-                <span className="text-[8px] font-mono text-slate-400 font-extrabold select-none shrink-0 uppercase">Scope:</span>
+                <span className="text-[8px] font-mono text-slate-400 font-extrabold select-none shrink-0 uppercase">Scopes:</span>
                 <input 
                   type="text"
                   value={activeWorkflow.category}
                   onChange={(e) => {
                     handleUpdateWorkflowDetails(activeWorkflow.id, activeWorkflow.title, activeWorkflow.description, e.target.value);
                   }}
-                  className="text-[9px] font-mono font-bold uppercase tracking-wider bg-blue-50 border border-blue-200 text-blue-700 px-2 py-0.5 rounded outline-none w-24 text-center focus:bg-white focus:border-blue-500 shrink-0"
-                  title="Edit Category filter tag directly on-the-fly"
+                  className="text-[9px] font-mono font-bold uppercase tracking-wider bg-blue-50 border border-blue-200 text-blue-700 px-2 py-0.5 rounded outline-none w-28 text-center focus:bg-white focus:border-blue-500 shrink-0"
+                  title="Edit category tags (comma separated) directly on-the-fly"
                 />
 
                 <span className="text-slate-300 text-[10px] select-none shrink-0 border-l border-slate-200 h-4 pl-2 font-bold">|</span>
@@ -1295,12 +1612,18 @@ export default function App() {
             <Sidebar 
               node={activeSelectedNode}
               allNodes={activeWorkflowNodes}
+              globalNodes={nodes}
               links={activeWorkflowLinks}
               onUpdateNode={(node) => handleUpdateNodeData(node.id, node)}
               onDeleteNode={handleDeleteNode}
               onClose={() => setSelectedNodeId(null)}
               queueLinks={queueLinks}
               queueResources={queueResources}
+              onAddNode={handleAddNode}
+              onAddLink={handleAddLink}
+              workflows={workflows}
+              onDuplicateNodeToWorkflow={handleDuplicateNodeToWorkflow}
+              onRemoveTagGlobally={handleRemoveTagGlobally}
             />
           </div>
         </div>
@@ -1375,36 +1698,63 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-mono font-black text-slate-500 mb-1 uppercase tracking-tight">Scope Domain Tag</label>
+                <label className="block text-[10px] font-mono font-black text-slate-500 mb-1 uppercase tracking-tight">Scope Domain Tag(s) (Comma separated)</label>
                 <input 
                   type="text"
                   value={activeWorkflow.category}
                   onChange={(e) => {
                     handleUpdateWorkflowDetails(activeWorkflow.id, activeWorkflow.title, activeWorkflow.description, e.target.value);
                   }}
-                  placeholder="Type any custom tag category..."
+                  placeholder="e.g., Architecture, SaaS Dev, Devops..."
                   className="w-full bg-slate-50 border-2 border-black text-slate-900 font-bold text-xs rounded-lg px-3 py-2 outline-none focus:bg-white"
                   id="metadata-scope-cat-input"
                 />
                 
-                <span className="block text-[9px] font-mono text-slate-400 uppercase tracking-widest mt-2.5 mb-1.5 font-bold">Suggested categories:</span>
+                <span className="block text-[9px] font-mono text-slate-400 uppercase tracking-widest mt-2.5 mb-1.5 font-bold">Suggested categories (Toggle to multi-select):</span>
                 <div className="flex flex-wrap gap-1" id="metadata-suggestions-pills">
-                  {['Architecture', 'AI Pipeline', 'Database schema', 'SaaS Dev', 'Devops'].map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => {
-                        handleUpdateWorkflowDetails(activeWorkflow.id, activeWorkflow.title, activeWorkflow.description, item);
-                      }}
-                      className={`px-2 py-0.5 text-[9px] font-mono rounded border transition-colors cursor-pointer ${
-                        activeWorkflow.category === item
-                          ? 'bg-blue-600 text-white border-black font-extrabold shadow-[1px_1px_0px_#000]'
-                          : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
-                      }`}
-                    >
-                      {item}
-                    </button>
-                  ))}
+                  {(() => {
+                    const activeWorkflowTags = (activeWorkflow.category || '')
+                      .split(',')
+                      .map(s => s.trim())
+                      .filter(Boolean);
+
+                    const allIndividualCategories = workflows.flatMap(w => 
+                      (w.category || '').split(',').map(s => s.trim()).filter(Boolean)
+                    );
+
+                    return Array.from(new Set([
+                      'Architecture', 
+                      'AI Pipeline', 
+                      'Database schema', 
+                      'SaaS Dev', 
+                      'Devops',
+                      ...allIndividualCategories
+                    ])).map((item) => {
+                      const isSelected = activeWorkflowTags.includes(item);
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => {
+                            let updatedTags;
+                            if (isSelected) {
+                              updatedTags = activeWorkflowTags.filter(t => t !== item);
+                            } else {
+                              updatedTags = [...activeWorkflowTags, item];
+                            }
+                            handleUpdateWorkflowDetails(activeWorkflow.id, activeWorkflow.title, activeWorkflow.description, updatedTags.join(', '));
+                          }}
+                          className={`px-2.5 py-1 text-[9px] font-mono border-2 rounded-md transition-all cursor-pointer font-bold ${
+                            isSelected
+                              ? 'bg-blue-600 text-white border-black font-extrabold shadow-[1.5px_1.5px_0px_#000] active:translate-y-[0.5px]'
+                              : 'bg-white hover:bg-slate-150 text-slate-700 border-slate-300'
+                          }`}
+                        >
+                          {isSelected ? `✓ ${item}` : item}
+                        </button>
+                      );
+                    });
+                  })()}
                 </div>
               </div>
             </div>

@@ -18,30 +18,43 @@ import {
   FileText,
   Badge,
   TrendingUp,
-  Info
+  Info,
+  FolderPlus
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface SidebarProps {
   node: WorkflowNode | null;
   allNodes: WorkflowNode[];
+  globalNodes?: WorkflowNode[];
   links: NodeLink[];
   onUpdateNode: (node: WorkflowNode) => void;
   onDeleteNode: (nodeId: string) => void;
   onClose: () => void;
   queueLinks?: ResourceLinkToNode[];
   queueResources?: QueueResource[];
+  onAddNode?: (node: Omit<WorkflowNode, 'id' | 'createdAt' | 'updatedAt'>) => string;
+  onAddLink?: (fromNodeId: string, toNodeId: string) => void;
+  workflows?: any[];
+  onDuplicateNodeToWorkflow?: (nodeId: string, targetWorkflowId: string) => void;
+  onRemoveTagGlobally?: (tag: string) => void;
 }
 
 export default function Sidebar({
   node,
   allNodes,
+  globalNodes = [],
   links,
   onUpdateNode,
   onDeleteNode,
   onClose,
   queueLinks = [],
-  queueResources = []
+  queueResources = [],
+  onAddNode,
+  onAddLink,
+  workflows = [],
+  onDuplicateNodeToWorkflow,
+  onRemoveTagGlobally
 }: SidebarProps) {
   const selectedNode = node;
   const allLinks = links;
@@ -67,13 +80,62 @@ export default function Sidebar({
   // Multi-tags input local state helper
   const [newTagInput, setNewTagInput] = useState('');
 
+  // Inline tag editing states
+  const [editingTagIndex, setEditingTagIndex] = useState<number | null>(null);
+  const [editingTagValue, setEditingTagValue] = useState<string>('');
+
+  // State for confirming global tag deletion to prevent iframe alert/confirm issues
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<string | null>(null);
+
   // Delete node confirming state
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+
+  // Workspace transition state
+  const [confirmMoveToWorkflowId, setConfirmMoveToWorkflowId] = useState<string | null>(null);
+
+  // Auto suggestions visibility state
+  const [showTitleAutoSuggest, setShowTitleAutoSuggest] = useState(false);
+  const [showUrlAutoSuggest, setShowUrlAutoSuggest] = useState(false);
 
   // Reset confirming state when selecting a different node
   React.useEffect(() => {
     setIsConfirmingDelete(false);
+    setConfirmMoveToWorkflowId(null);
+    setEditingTagIndex(null);
+    setEditingTagValue('');
+    setConfirmDeleteTag(null);
   }, [selectedNode?.id]);
+
+  // Autocomplete suggestions calculation
+  const typedTitle = selectedNode ? (selectedNode.title || '').trim().toLowerCase() : '';
+  const titleSuggestions = selectedNode && globalNodes
+    ? Array.from(new Set(
+        globalNodes
+          .map(n => n.title)
+          .filter(t => t && t.trim() && t.toLowerCase() !== (selectedNode.title || '').trim().toLowerCase())
+      )).filter(t => t.toLowerCase().includes(typedTitle)).slice(0, 5)
+    : [];
+
+  const typedUrl = selectedNode ? (selectedNode.sourceUrl || '').trim().toLowerCase() : '';
+  const urlSuggestions = (() => {
+    if (!selectedNode) return [];
+    const urlMap = new Map<string, { url: string; title: string }>();
+    globalNodes.forEach(n => {
+      if (n.sourceUrl && n.sourceUrl.trim()) {
+        urlMap.set(n.sourceUrl.trim(), { url: n.sourceUrl.trim(), title: n.sourceTitle || n.title || '' });
+      }
+    });
+    queueResources.forEach(r => {
+      if (r.url && r.url.trim()) {
+        urlMap.set(r.url.trim(), { url: r.url.trim(), title: r.title || '' });
+      }
+    });
+    const allSuggestedUrls = Array.from(urlMap.values());
+    return allSuggestedUrls.filter(item => 
+      item.url.toLowerCase().includes(typedUrl) && 
+      item.url.toLowerCase() !== (selectedNode.sourceUrl || '').trim().toLowerCase()
+    ).slice(0, 5);
+  })();
 
   if (!selectedNode) {
     return (
@@ -110,20 +172,80 @@ export default function Sidebar({
     });
   };
 
-  // Add tag tag handler
-  const handleAddTag = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Upgraded Add tag handler allowing multiple comma/semicolon/slash separated tags
+  const handleAddTag = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!newTagInput.trim()) return;
-    const cleanTag = newTagInput.trim().toLowerCase();
-    if (!selectedNode.tags.includes(cleanTag)) {
-      handleChange('tags', [...selectedNode.tags, cleanTag]);
-    }
+    
+    const separators = /[,;/]+/;
+    const rawTokens = newTagInput.split(separators);
+    const updatedTags = [...(selectedNode.tags || [])];
+    
+    rawTokens.forEach(token => {
+      const clean = token.trim().toLowerCase();
+      if (clean && !updatedTags.includes(clean)) {
+        updatedTags.push(clean);
+      }
+    });
+    
+    handleChange('tags', updatedTags);
     setNewTagInput('');
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    handleChange('tags', selectedNode.tags.filter(t => t !== tagToRemove));
+    handleChange('tags', (selectedNode.tags || []).filter(t => t !== tagToRemove));
   };
+
+  // Inline tag editing functions
+  const startEditingTag = (index: number, value: string) => {
+    setEditingTagIndex(index);
+    setEditingTagValue(value);
+  };
+
+  const saveEditedTag = (index: number) => {
+    if (editingTagIndex === null) return;
+    const cleanValue = editingTagValue.trim().toLowerCase();
+    
+    const updatedTags = [...(selectedNode.tags || [])];
+    if (!cleanValue) {
+      // If cleared, just remove the tag
+      updatedTags.splice(index, 1);
+    } else {
+      // Check if it already exists elsewhere to avoid duplicates
+      const dupIdx = updatedTags.findIndex((t, i) => t === cleanValue && i !== index);
+      if (dupIdx !== -1) {
+        // If it's a duplicate, just remove current slot
+        updatedTags.splice(index, 1);
+      } else {
+        updatedTags[index] = cleanValue;
+      }
+    }
+    handleChange('tags', updatedTags);
+    setEditingTagIndex(null);
+    setEditingTagValue('');
+  };
+
+  // Get unique tags from all nodes across the workspace to make it easy to reuse or purge
+  const allWorkspaceUniqueTags = (() => {
+    if (!globalNodes) return [];
+    const allUnique = new Set<string>();
+    globalNodes.forEach(n => {
+      if (n.tags && Array.isArray(n.tags)) {
+        n.tags.forEach(t => {
+          if (t && t.trim()) {
+            allUnique.add(t.trim().toLowerCase());
+          }
+        });
+      }
+    });
+    return Array.from(allUnique).sort();
+  })();
+
+  // Get unique tags from all nodes across the workspace that are not selected on the current card
+  const workspaceUsedTags = (() => {
+    const currentNodeTags = selectedNode?.tags || [];
+    return allWorkspaceUniqueTags.filter(t => !currentNodeTags.includes(t));
+  })();
 
   // Preset Common domain tag suggestions
   const suggestionTags = ['npm', 'docker', 'stripe', 'api-endpoint', 'nextjs', 'spanner', 'auth', 'database', 'gemini'];
@@ -219,6 +341,8 @@ export default function Sidebar({
               </button>
             </div>
 
+
+
             {matchingQueueResource && (
               <div className="bg-purple-50 border-2 border-purple-200 p-3 rounded-lg flex flex-col gap-1 select-none animate-fade-in text-[11px] font-mono text-purple-950">
                 <div className="flex items-center justify-between">
@@ -250,17 +374,43 @@ export default function Sidebar({
               </div>
             )}
 
-            {/* Title Form Field */}
+             {/* Title Form Field */}
             <div>
               <label className="block text-[10px] font-mono font-bold uppercase text-slate-650 mb-1">Title *</label>
-              <input 
-                type="text"
-                value={selectedNode.title}
-                onChange={(e) => handleChange('title', e.target.value)}
-                className="w-full bg-slate-50 border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-3 py-2.5 focus:bg-white outline-none"
-                placeholder="e.g., Stripe SDK initialization"
-                id="node-title-input"
-              />
+              <div className="relative">
+                <input 
+                  type="text"
+                  value={selectedNode.title}
+                  onChange={(e) => handleChange('title', e.target.value)}
+                  onFocus={() => setShowTitleAutoSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowTitleAutoSuggest(false), 200)}
+                  className="w-full bg-slate-50 border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-3 py-2.5 focus:bg-white outline-none"
+                  placeholder="e.g., Stripe SDK initialization"
+                  id="node-title-input"
+                  autoComplete="off"
+                />
+
+                {showTitleAutoSuggest && titleSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border-2 border-black rounded-lg shadow-[3px_3px_0px_#000] z-50 overflow-hidden text-xs max-h-[160px] overflow-y-auto" id="node-title-autocomplete-dropdown">
+                    <div className="bg-slate-100 p-1.5 border-b border-slate-200 text-[8px] font-mono leading-none font-extrabold uppercase text-slate-500 tracking-wider">
+                      📋 Copy existing card title:
+                    </div>
+                    {titleSuggestions.map((titleText) => (
+                      <button
+                        key={titleText}
+                        type="button"
+                        onMouseDown={() => {
+                          handleChange('title', titleText);
+                          setShowTitleAutoSuggest(false);
+                        }}
+                        className="w-full text-left py-2 px-3 hover:bg-blue-50 font-bold text-slate-800 transition-colors border-b border-slate-100 last:border-b-0 cursor-pointer"
+                      >
+                        {titleText}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Type Form field */}
@@ -297,6 +447,8 @@ export default function Sidebar({
                 </select>
               </div>
             </div>
+
+
 
             {/* Confidence metric indicator and Star Rating */}
             <div className="grid grid-cols-2 gap-3" id="rating-split-grid">
@@ -366,17 +518,314 @@ export default function Sidebar({
                 
                 <div>
                   <label className="block text-[9px] font-mono text-slate-500 uppercase">External Source URL</label>
-                  <input 
-                    type="url"
-                    value={selectedNode.sourceUrl || ''}
-                    onChange={(e) => handleChange('sourceUrl', e.target.value)}
-                    className="w-full bg-slate-50 border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-2 py-2 focus:bg-white outline-none"
-                    placeholder="e.g., https://cloud.google.com/..."
-                    id="node-source-url"
-                  />
+                  <div className="relative">
+                    <input 
+                      type="url"
+                      value={selectedNode.sourceUrl || ''}
+                      onChange={(e) => handleChange('sourceUrl', e.target.value)}
+                      onFocus={() => setShowUrlAutoSuggest(true)}
+                      onBlur={() => setTimeout(() => setShowUrlAutoSuggest(false), 200)}
+                      className="w-full bg-slate-50 border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-2 py-2 focus:bg-white outline-none"
+                      placeholder="e.g., https://cloud.google.com/..."
+                      id="node-source-url"
+                      autoComplete="off"
+                    />
+
+                    {showUrlAutoSuggest && urlSuggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border-2 border-black rounded-lg shadow-[3px_3px_0px_#000] z-50 overflow-hidden text-xs max-h-[160px] overflow-y-auto" id="node-url-autocomplete-dropdown">
+                        <div className="bg-slate-100 p-1.5 border-b border-slate-200 text-[8px] font-mono leading-none font-extrabold uppercase text-slate-500 tracking-wider">
+                          🌐 Copy existing source URL:
+                        </div>
+                        {urlSuggestions.map((item) => (
+                          <button
+                            key={item.url}
+                            type="button"
+                            onMouseDown={() => {
+                              handleChange('sourceUrl', item.url);
+                              if (item.title && !selectedNode.sourceTitle) {
+                                handleChange('sourceTitle', item.title);
+                              }
+                              setShowUrlAutoSuggest(false);
+                            }}
+                            className="w-full text-left py-1.5 px-3 hover:bg-amber-50 border-b border-slate-150 last:border-b-0 cursor-pointer flex flex-col gap-0.5 text-slate-800 transition-colors"
+                          >
+                            <span className="font-bold truncate">{item.title || 'Source Links'}</span>
+                            <span className="text-[8px] font-mono text-slate-500 truncate leading-tight">{item.url}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
+
+            {/* TAGS MANAGEMENT GROUP */}
+            <div className="p-3 bg-blue-50/50 border-2 border-black rounded-lg space-y-2 select-none font-sans text-sm" id="tags-management-block">
+              <label className="block text-[10px] font-mono font-bold uppercase text-blue-900 flex items-center justify-between">
+                <span>🏷️ Tags & Categories ({selectedNode.tags?.length || 0})</span>
+                <span className="text-[8px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded border border-blue-200 font-mono font-medium">
+                  Multiple: use comma (,)
+                </span>
+              </label>
+
+              {/* Tag Badges List with delete & click-to-edit support */}
+              {selectedNode.tags && selectedNode.tags.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 p-1 border-2 border-black bg-white rounded-md min-h-[36px]" id="tags-list-container">
+                  {selectedNode.tags.map((tagText, idx) => {
+                    const isEditing = editingTagIndex === idx;
+                    return (
+                      <div 
+                        key={`${tagText}-${idx}`} 
+                        className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-1.5 py-0.5 border border-black bg-slate-100 rounded text-slate-805 hover:bg-slate-205 transition-all shadow-[1px_1px_0px_rgba(0,0,0,1)] hover:-translate-y-[0.5px]"
+                        title="Double-click or click to edit tag"
+                      >
+                        {isEditing ? (
+                          <div className="flex items-center gap-1" id={`editing-tag-cell-${idx}`}>
+                            <input 
+                              type="text" 
+                              value={editingTagValue} 
+                              onChange={(e) => setEditingTagValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') saveEditedTag(idx);
+                                if (e.key === 'Escape') setEditingTagIndex(null);
+                              }}
+                              className="w-16 bg-white border border-black rounded font-mono text-[9px] px-0.5 outline-none font-bold text-black"
+                              autoFocus
+                              onBlur={() => saveEditedTag(idx)}
+                            />
+                            <button 
+                              type="button"
+                              onMouseDown={() => saveEditedTag(idx)}
+                              className="text-emerald-700 hover:text-emerald-950 font-extrabold px-0.5"
+                              title="Save Tag"
+                            >
+                              ✓
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <span 
+                              className="cursor-pointer truncate max-w-[120px]" 
+                              onClick={() => startEditingTag(idx, tagText)}
+                              title="Click to Edit"
+                            >
+                              {tagText}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveTag(tagText);
+                              }}
+                              className="text-red-600 hover:text-red-800 hover:scale-125 transition-transform cursor-pointer font-extrabold pl-0.5 border-l border-slate-350 ml-1 font-sans text-[10px] w-3 h-3 flex items-center justify-center bg-slate-200/50 hover:bg-red-50 rounded"
+                              title="Remove tag"
+                            >
+                              ×
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-2 bg-white border-2 border-black border-dashed rounded font-mono text-[9px] text-slate-500 uppercase font-black" id="no-tags-placeholder">
+                  No tags added yet
+                </div>
+              )}
+
+              {/* Add tag Input trigger & helper */}
+              <form onSubmit={handleAddTag} className="flex gap-1.5" id="add-tag-form-element">
+                <input 
+                  type="text"
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  placeholder="e.g. key, database, vercel"
+                  className="flex-1 bg-white border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-2.5 py-1.5 focus:bg-white outline-none placeholder-slate-400 font-sans"
+                  id="tag-creation-input"
+                />
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-mono font-bold text-[10px] px-3 py-1.5 border-2 border-black rounded-lg transition-all cursor-pointer shadow-[1.5px_1.5px_0px_#000] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000]"
+                >
+                  ADD
+                </button>
+              </form>
+
+              {/* Suggestions Quick clickers */}
+              <div className="pt-1.5 select-none space-y-2.5" id="tag-suggestions-box">
+                {/* 1. Global Workspace Tags */}
+                <div className="space-y-1" id="global-workspace-tags-section">
+                  <span className="text-[8.5px] font-mono text-slate-500 uppercase tracking-tight block">
+                    🌐 Global Tags (Used in Workspaces):
+                  </span>
+                  
+                  {allWorkspaceUniqueTags.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1.5 bg-white border-2 border-black rounded-lg" id="workspace-unselected-list">
+                      {allWorkspaceUniqueTags.map(utag => {
+                        const isPinnedOnCurrent = (selectedNode.tags || []).includes(utag);
+                        const isConfirming = confirmDeleteTag === utag;
+                        // Count how many cards use this tag
+                        const useCount = globalNodes ? globalNodes.filter(n => n.tags && Array.isArray(n.tags) && n.tags.includes(utag)).length : 0;
+                        
+                        return (
+                          <div
+                            key={utag}
+                            className={`inline-flex items-center gap-0.5 text-[8.5px] font-mono font-semibold rounded overflow-hidden shadow-sm border transition-all ${
+                              isConfirming
+                                ? 'bg-red-50 border-red-400 text-red-950 shadow-xs'
+                                : isPinnedOnCurrent 
+                                  ? 'bg-emerald-50 text-emerald-900 border-emerald-400' 
+                                  : 'bg-slate-50 hover:bg-slate-100 border-slate-300 text-slate-805'
+                            }`}
+                          >
+                            {!isConfirming && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const updated = [...(selectedNode.tags || [])];
+                                  if (isPinnedOnCurrent) {
+                                    handleChange('tags', updated.filter(t => t !== utag));
+                                  } else {
+                                    handleChange('tags', [...updated, utag]);
+                                  }
+                                }}
+                                className="px-1.5 py-0.5 font-bold transition-colors cursor-pointer flex items-center gap-0.5"
+                                title={isPinnedOnCurrent ? "Click to unpin from this card" : "Click to pin to this card"}
+                              >
+                                {isPinnedOnCurrent ? '✓' : '+'} {utag} <span className="text-[7.5px] opacity-60">({useCount})</span>
+                              </button>
+                            )}
+
+                            {isConfirming ? (
+                              <div className="flex items-center" id="global-tag-confirm-box">
+                                <span className="px-1 py-0.5 font-bold text-red-700 bg-red-100 text-[8px] animate-pulse">Delete {utag}?</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (onRemoveTagGlobally) {
+                                      onRemoveTagGlobally(utag);
+                                    }
+                                    setConfirmDeleteTag(null);
+                                  }}
+                                  className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white font-extrabold cursor-pointer transition-colors text-[8px]"
+                                  title="Confirm delete"
+                                >
+                                  YES
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDeleteTag(null);
+                                  }}
+                                  className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold cursor-pointer transition-colors text-[8px] border-l border-white/50"
+                                  title="Cancel"
+                                >
+                                  NO
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDeleteTag(utag);
+                                }}
+                                className="px-1 py-0.5 text-red-600 hover:text-red-900 border-l border-slate-200 transition-colors cursor-pointer font-extrabold text-[8.5px] h-full flex items-center bg-red-50/50 hover:bg-red-100"
+                                title="Delete tag globally from ALL cards"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-[8px] font-mono text-slate-400 italic">No tags registered in workspace nodes.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* AI Tool Pricing & Credit Configuration (Only for type === 'tool') */}
+            {selectedNode.type === 'tool' && (
+              <div className="p-3 bg-purple-50 border-2 border-black rounded-lg space-y-3" id="ai-tool-config-section">
+                <span className="text-[10px] font-mono font-bold block uppercase text-purple-800 tracking-wide flex items-center gap-1 leading-none select-none">
+                  ⚙️ AI Tool Pricing & Credits
+                </span>
+                
+                <div>
+                  <label className="block text-[8.5px] font-mono font-bold text-slate-600 uppercase mb-1">
+                    Select Pricing Class / Tier tag:
+                  </label>
+                  <div className="grid grid-cols-3 gap-1" id="pricing-tier-toggles">
+                    {['Free', 'Daily credits', 'Monthly credits'].map((tier) => {
+                      const isActive = selectedNode.pricingTier === tier || (!selectedNode.pricingTier && tier === 'Free');
+                      
+                      // Assign distinct styling schemes for each class/tier
+                      let btnStyle = '';
+                      if (tier === 'Free') {
+                        btnStyle = isActive
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-black shadow-[1.5px_1.5px_0px_#000] translate-y-[0.5px] font-extrabold'
+                          : 'bg-emerald-50/30 hover:bg-emerald-100/50 text-emerald-800 border-emerald-250';
+                      } else if (tier === 'Daily credits') {
+                        btnStyle = isActive
+                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-black shadow-[1.5px_1.5px_0px_#000] translate-y-[0.5px] font-extrabold'
+                          : 'bg-indigo-50/30 hover:bg-indigo-100/50 text-indigo-800 border-indigo-250';
+                      } else { // Monthly credits
+                        btnStyle = isActive
+                          ? 'bg-amber-500 hover:bg-amber-600 text-white border-black shadow-[1.5px_1.5px_0px_#000] translate-y-[0.5px] font-extrabold'
+                          : 'bg-amber-50/30 hover:bg-amber-100/50 text-amber-800 border-amber-250';
+                      }
+
+                      return (
+                        <button
+                          key={tier}
+                          type="button"
+                          onClick={() => {
+                            // Perform a single contiguous state save to resolve the 2-clicks async reactivity lag!
+                            const otherTiers = ['Free', 'Daily credits', 'Monthly credits'].filter(t => t !== tier);
+                            const nextTags = selectedNode.tags.filter(t => !otherTiers.includes(t));
+                            const updatedTags = nextTags.includes(tier) ? nextTags : [...nextTags, tier];
+                            
+                            onUpdateNode({
+                              ...selectedNode,
+                              pricingTier: tier,
+                              tags: updatedTags
+                            });
+                          }}
+                          className={`text-[9px] font-mono py-1 px-1 border-2 rounded transition-all cursor-pointer ${btnStyle}`}
+                        >
+                          {tier}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[8.5px] font-mono font-bold text-slate-600 uppercase mb-1">
+                    Approximate Uses Before Credits Finish:
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedNode.approximateUses || ''}
+                    onChange={(e) => handleChange('approximateUses', e.target.value)}
+                    placeholder="e.g., 4-7 prompts, 50 queries"
+                    className="w-full bg-white border-2 border-black text-slate-900 font-bold text-xs rounded px-2.5 py-1.5 outline-none placeholder-slate-400 focus:bg-white"
+                    id="tool-credit-capacity-input"
+                  />
+                  <span className="text-[8.5px] font-mono text-slate-500 mt-1 block leading-normal">
+                    💡 Example logic: Claude may finish remaining limits in approx. 4-7 prompts.
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Connected node relationships display */}
             <div className="border-t border-slate-100 pt-3 space-y-2 select-none" id="node-relationships-segment">
@@ -411,6 +860,90 @@ export default function Sidebar({
                 <p className="text-[11px] text-slate-650 font-mono italic p-3 bg-slate-50 border border-dashed border-slate-300 rounded-lg">
                   Isolated card. Connect it securely by dragging the left/right anchor dots of different flowchart cards to wire them together.
                 </p>
+              )}
+            </div>
+
+            {/* Duplicate to another Workspace Panel */}
+            <div 
+              className="border-t-2 border-slate-200 pt-3 bg-gradient-to-br from-purple-50 to-indigo-50/70 p-3 rounded-lg border-2 border-black select-none shadow-[2px_2px_0px_#000] space-y-2" 
+              id="sidebar-node-move-panel"
+            >
+              <span className="text-[10px] font-mono font-bold block uppercase text-purple-900 flex items-center gap-1.5">
+                <FolderPlus className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                Duplicate Card to Workspace
+              </span>
+              
+              <p className="text-[9px] text-purple-800 leading-normal font-medium">
+                Duplicate this whiteboard node card to another active workspace canvas. Keeps the original card in place and creates a fresh copy.
+              </p>
+
+              {workflows.length > 1 ? (
+                <div className="space-y-1">
+                  <div className="max-h-28 overflow-y-auto border-2 border-black rounded-lg bg-white p-1 space-y-1" id="move-inner-scroller-node">
+                    {workflows
+                      .filter(wf => wf.id !== selectedNode.workflowId)
+                      .map((wf) => {
+                        const isTargetingThis = confirmMoveToWorkflowId === wf.id;
+                        return (
+                          <div 
+                            key={wf.id} 
+                            className={`p-1 rounded transition-all ${
+                              isTargetingThis 
+                                ? 'bg-purple-100 border border-purple-400 shadow-sm' 
+                                : 'hover:bg-purple-50 border border-transparent'
+                            }`}
+                          >
+                            {!isTargetingThis ? (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmMoveToWorkflowId(wf.id)}
+                                className="w-full text-left font-mono font-black text-[9px] text-purple-900 hover:text-purple-700 flex items-center justify-between gap-1.5 cursor-pointer"
+                              >
+                                <span className="truncate flex items-center gap-1">
+                                  <span>📁</span>
+                                  <span>{wf.title}</span>
+                                </span>
+                                <span className="text-[7.5px] bg-purple-650 hover:bg-purple-750 text-white px-1.5 py-0.5 rounded font-mono font-black shrink-0 tracking-wide uppercase shadow-[1px_1px_0px_rgba(0,0,0,0.15)] hover:bg-purple-700 transition-all active:translate-y-[0.5px]">
+                                  DUPLICATE
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="flex flex-col gap-1.5 p-0.5">
+                                <span className="text-[8px] font-sans font-black text-purple-950 block">
+                                  Duplicate to "{wf.title}"?
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (onDuplicateNodeToWorkflow) {
+                                        onDuplicateNodeToWorkflow(selectedNode.id, wf.id);
+                                      }
+                                      setConfirmMoveToWorkflowId(null);
+                                    }}
+                                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-mono text-[8px] font-black py-0.5 px-1.5 rounded border border-black cursor-pointer text-center uppercase shadow-[1px_1px_0px_#000] active:translate-y-[0.5px]"
+                                  >
+                                    ✓ Confirm
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmMoveToWorkflowId(null)}
+                                    className="bg-white hover:bg-slate-100 text-slate-700 font-mono text-[8px] font-bold py-0.5 px-1.5 rounded border border-slate-350 cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-1.5 bg-slate-100 border-2 border-black border-dashed rounded font-mono text-[8.5px] text-slate-500 uppercase font-bold">
+                  No other workspaces available
+                </div>
               )}
             </div>
 

@@ -1451,6 +1451,39 @@ export default function Canvas({
                       );
                     })()}
 
+                    {/* Tool specific Pricing Tier & Usage capacity badges */}
+                    {node.type === 'tool' && (() => {
+                      const tier = node.pricingTier || 'Free';
+                      let tierBg = 'bg-purple-50/50 border-purple-200';
+                      let badgeCls = 'text-purple-700 bg-purple-100 border-purple-250';
+                      
+                      if (tier === 'Free') {
+                        tierBg = 'bg-emerald-50/40 border-emerald-200';
+                        badgeCls = 'text-emerald-700 bg-emerald-100 border-emerald-150';
+                      } else if (tier === 'Daily credits') {
+                        tierBg = 'bg-indigo-50/40 border-indigo-200';
+                        badgeCls = 'text-indigo-700 bg-indigo-100 border-indigo-150';
+                      } else if (tier === 'Monthly credits') {
+                        tierBg = 'bg-amber-50/40 border-amber-205';
+                        badgeCls = 'text-amber-800 bg-amber-100 border-amber-150';
+                      }
+                      
+                      return (
+                        <div className={`mt-1.5 p-1 px-1.5 border rounded flex flex-col gap-0.5 text-[8.5px] font-mono leading-none ${tierBg}`} id={`tool-pricing-card-${node.id}`}>
+                          <div className="flex items-center gap-1">
+                            <span className={`font-extrabold uppercase tracking-tight px-1 py-0.5 rounded border ${badgeCls}`}>
+                              ⚙️ {tier}
+                            </span>
+                          </div>
+                          {node.approximateUses && (
+                            <div className="text-[8px] font-bold text-slate-500 mt-1 truncate" title={`Approximate capacity limit: ${node.approximateUses}`}>
+                              Capacity: <span className="text-slate-800">{node.approximateUses}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Image rendering inside image nodes */}
                     {node.type === 'image' && node.content && (
                       <div 

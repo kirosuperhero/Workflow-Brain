@@ -61,18 +61,23 @@ export default function WorkflowList({
     ? Math.round((trustedNodesCount / totalNodesCount) * 100) 
     : 0;
 
-  // Extract unique categories
-  const categories = Array.from(new Set(workflows.map(w => w.category || 'Architecture')));
+  // Extract unique individual categories
+  const categories = Array.from(new Set(
+    workflows.flatMap(w => (w.category || '').split(',').map(s => s.trim()).filter(Boolean))
+  ));
 
   // Filter workflows list
   const filteredWorkflows = workflows.filter(w => {
     if (w.isTemplate) return false; // Hide direct templates from active list
-    if (categoryFilter !== 'all' && w.category !== categoryFilter) return false;
+    if (categoryFilter !== 'all') {
+      const wCats = (w.category || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (!wCats.includes(categoryFilter)) return false;
+    }
     if (searchQuery.trim() !== '') {
       const q = searchQuery.toLowerCase();
       const matchTitle = w.title.toLowerCase().includes(q);
       const matchDesc = w.description.toLowerCase().includes(q);
-      const matchCat = w.category.toLowerCase().includes(q);
+      const matchCat = (w.category || '').toLowerCase().includes(q);
       if (!matchTitle && !matchDesc && !matchCat) return false;
     }
     return true;
@@ -253,9 +258,17 @@ export default function WorkflowList({
                   
                   {/* Category, Favorite stars */}
                   <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 border-b border-slate-100 pb-2 mb-3" id={`workflow-meta-${item.id}`}>
-                    <span className="bg-slate-100 text-slate-700 font-bold px-2 py-0.5 border-1.5 border-black rounded">
-                      {item.category}
-                    </span>
+                    <div className="flex flex-wrap gap-1" id={`workflow-tags-container-${item.id}`}>
+                      {(item.category || 'Architecture')
+                        .split(',')
+                        .map(s => s.trim())
+                        .filter(Boolean)
+                        .map((cat, idx) => (
+                          <span key={idx} className="bg-slate-50 text-slate-800 font-black text-[9px] px-2 py-0.5 border border-black rounded-md shadow-[1px_1px_0px_rgba(0,0,0,0.15)] uppercase">
+                            {cat}
+                          </span>
+                        ))}
+                    </div>
                     <div className="flex items-center gap-1.5" id={`favorite-toggle-area-${item.id}`}>
                       <button
                         type="button"
@@ -486,27 +499,45 @@ export default function WorkflowList({
                   <div className="space-y-1">
                     <span className="block text-[9px] font-mono text-slate-400 uppercase font-bold">Suggestions / Pre-existing Domains:</span>
                     <div className="flex flex-wrap gap-1.5" id="creation-category-pills">
-                      {Array.from(new Set([
-                        'Architecture', 
-                        'AI Pipeline', 
-                        'Database schema', 
-                        'SaaS Dev', 
-                        'Devops',
-                        ...categories
-                      ])).map((cat) => (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => setNewCategory(cat)}
-                          className={`px-2 py-0.5 text-[10px] font-mono border rounded transition-colors cursor-pointer ${
-                            newCategory === cat
-                              ? 'bg-blue-600 text-white border-black font-extrabold shadow-[1px_1px_0px_#000]'
-                              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
-                          }`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
+                      {(() => {
+                        const currentNewCategoryTags = (newCategory || '')
+                          .split(',')
+                          .map(s => s.trim())
+                          .filter(Boolean);
+
+                        return Array.from(new Set([
+                          'Architecture', 
+                          'AI Pipeline', 
+                          'Database schema', 
+                          'SaaS Dev', 
+                          'Devops',
+                          ...categories
+                        ])).map((cat) => {
+                          const isSelected = currentNewCategoryTags.includes(cat);
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => {
+                                let updatedTags;
+                                if (isSelected) {
+                                  updatedTags = currentNewCategoryTags.filter(t => t !== cat);
+                                } else {
+                                  updatedTags = [...currentNewCategoryTags, cat];
+                                }
+                                setNewCategory(updatedTags.join(', '));
+                              }}
+                              className={`px-2.5 py-1 text-[9px] font-mono border-2 rounded-md transition-all cursor-pointer font-bold ${
+                                isSelected
+                                  ? 'bg-blue-600 text-white border-black font-extrabold shadow-[1.5px_1.5px_0px_#000] active:translate-y-[0.5px]'
+                                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              {isSelected ? `✓ ${cat}` : cat}
+                            </button>
+                          );
+                        });
+                      })()}
                     </div>
                   </div>
                 </div>

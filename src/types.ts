@@ -30,6 +30,8 @@ export interface WorkflowNode {
   positionY: number;
   tags: string[];
   reviews?: any[];
+  pricingTier?: string;
+  approximateUses?: string;
   createdAt: string;
   updatedAt: string;
 }
