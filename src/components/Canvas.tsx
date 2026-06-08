@@ -43,7 +43,7 @@ interface CanvasProps {
   links: NodeLink[];
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string | null) => void;
-  onUpdateNodePosition: (nodeId: string, x: number, y: number) => void;
+  onUpdateNodePosition: (nodeId: string, x: number, y: number, shouldSave?: boolean) => void;
   onNodeDragStart?: () => void;
   onAddNode: (type: NodeType, x: number, y: number, initialFields?: Partial<WorkflowNode>) => string;
   onDeleteNode: (nodeId: string) => void;
@@ -121,22 +121,22 @@ export default function Canvas({
 
   // Smart alignment / collision avoidance mode
   const [smartAlign, setSmartAlign] = useState<boolean>(() => {
-    const saved = localStorage.getItem('canvas_smart_align');
-    return saved !== null ? saved === 'true' : true;
+    const saved = localStorage.getItem('canvas_smart_align_v2');
+    return saved !== null ? saved === 'true' : false;
   });
 
   useEffect(() => {
-    localStorage.setItem('canvas_smart_align', String(smartAlign));
+    localStorage.setItem('canvas_smart_align_v2', String(smartAlign));
   }, [smartAlign]);
 
   // Snap to grid setting for precision node alignment
   const [snapToGrid, setSnapToGrid] = useState<boolean>(() => {
-    const saved = localStorage.getItem('canvas_snap_to_grid');
-    return saved !== null ? saved === 'true' : true;
+    const saved = localStorage.getItem('canvas_snap_to_grid_v2');
+    return saved !== null ? saved === 'true' : false;
   });
 
   useEffect(() => {
-    localStorage.setItem('canvas_snap_to_grid', String(snapToGrid));
+    localStorage.setItem('canvas_snap_to_grid_v2', String(snapToGrid));
   }, [snapToGrid]);
 
   // Node Linking State
@@ -721,7 +721,8 @@ export default function Canvas({
       onUpdateNodePosition(
         draggingNodeId, 
         Math.max(-500, Math.min(2500, finalX)), 
-        Math.max(-500, Math.min(2000, finalY))
+        Math.max(-500, Math.min(2000, finalY)),
+        false // defer saves during active dragging moves
       );
     } else if (isPanning) {
       const dx = e.clientX - panStart.x;
@@ -735,6 +736,10 @@ export default function Canvas({
 
   const handleMouseUp = () => {
     if (draggingNodeId) {
+      const draggedNode = nodes.find(n => n.id === draggingNodeId);
+      if (draggedNode) {
+        onUpdateNodePosition(draggingNodeId, draggedNode.positionX, draggedNode.positionY, true);
+      }
       setDraggingNodeId(null);
       setAlignGuidesX([]);
       setAlignGuidesY([]);
@@ -1288,7 +1293,7 @@ export default function Canvas({
                     stroke={strokeColor}
                     strokeWidth="2"
                     strokeDasharray={fromNode.status === 'experimental' ? '5 4' : undefined}
-                    className="transition-all duration-200"
+                    className="transition-colors duration-200"
                     markerEnd={`url(#${markerId})`}
                   />
 
@@ -1384,7 +1389,7 @@ export default function Canvas({
                   zIndex: draggingNodeId === node.id ? 100 : (isSelected ? 50 : 10)
                 }}
                 onMouseDown={(e) => handleNodeDragStart(e, node)}
-                className={`canvas-node w-60 bg-white border-2 text-slate-800 rounded-lg pointer-events-auto flex flex-col group transition-all duration-200 shadow-md ${
+                className={`canvas-node w-60 bg-white border-2 text-slate-800 rounded-lg pointer-events-auto flex flex-col group transition-[background-color,border-color,box-shadow,opacity] duration-150 shadow-md ${
                   isSelected 
                     ? 'border-blue-600 shadow-[4px_4px_0px_#2563eb] ring-2 ring-blue-600/15' 
                     : isTargetOfConnectState

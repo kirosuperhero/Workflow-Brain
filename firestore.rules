@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global safety net - Default Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Security helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Match users namespace
+    match /users/{userId} {
+      // Allow user to read/write their own profile
+      allow get, write: if isOwner(userId) && isValidId(userId);
+
+      // Workflows
+      match /workflows/{workflowId} {
+        allow read, write: if isOwner(userId) && isValidId(workflowId);
+      }
+
+      // Nodes
+      match /nodes/{nodeId} {
+        allow read, write: if isOwner(userId) && isValidId(nodeId);
+      }
+
+      // Links
+      match /links/{linkId} {
+        allow read, write: if isOwner(userId) && isValidId(linkId);
+      }
+
+      // Versions
+      match /versions/{versionId} {
+        allow read, write: if isOwner(userId) && isValidId(versionId);
+      }
+
+      // Queue Resources
+      match /queue_resources/{resourceId} {
+        allow read, write: if isOwner(userId) && isValidId(resourceId);
+      }
+
+      // Queue Reviews
+      match /queue_reviews/{reviewId} {
+        allow read, write: if isOwner(userId) && isValidId(reviewId);
+      }
+
+      // Queue Links
+      match /queue_links/{linkId} {
+        allow read, write: if isOwner(userId) && isValidId(linkId);
+      }
+
+      // Consolidated state backups
+      match /state/{stateId} {
+        allow read, write: if isOwner(userId) && isValidId(stateId);
+      }
+    }
+  }
+}

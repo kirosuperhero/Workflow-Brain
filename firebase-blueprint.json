@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "Workflow": {
+      "title": "Workflow",
+      "description": "A custom workflow diagram",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "status": { "type": "string" },
+        "rating": { "type": "number" },
+        "isTemplate": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "isFavorite": { "type": "boolean" }
+      },
+      "required": ["id", "title", "createdAt", "updatedAt"]
+    },
+    "WorkflowNode": {
+      "title": "WorkflowNode",
+      "description": "A node step in a workflow diagram",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workflowId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "summary": { "type": "string" },
+        "sourceUrl": { "type": "string" },
+        "sourceTitle": { "type": "string" },
+        "confidenceScore": { "type": "number" },
+        "rating": { "type": "number" },
+        "status": { "type": "string" },
+        "positionX": { "type": "number" },
+        "positionY": { "type": "number" },
+        "tags": { "type": "array" },
+        "pricingTier": { "type": "string" },
+        "approximateUses": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "workflowId", "type", "title"]
+    },
+    "NodeLink": {
+      "title": "NodeLink",
+      "description": "A connection between 2 workflow nodes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workflowId": { "type": "string" },
+        "fromNodeId": { "type": "string" },
+        "toNodeId": { "type": "string" },
+        "label": { "type": "string" }
+      },
+      "required": ["id", "workflowId", "fromNodeId", "toNodeId"]
+    },
+    "WorkflowVersion": {
+      "title": "WorkflowVersion",
+      "description": "A timestamped snapshot of a workflow version",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workflowId": { "type": "string" },
+        "versionName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "nodes": { "type": "array" },
+        "links": { "type": "array" }
+      },
+      "required": ["id", "workflowId", "versionName", "createdAt"]
+    },
+    "QueueResource": {
+      "title": "QueueResource",
+      "description": "An experimental resource item inside the queue view",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "url": { "type": "string" },
+        "type": { "type": "string" },
+        "shortSummary": { "type": "string" },
+        "tags": { "type": "array" },
+        "rating": { "type": "number" },
+        "notes": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "status", "createdAt", "updatedAt"]
+    },
+    "ResourceReview": {
+      "title": "ResourceReview",
+      "description": "A review for a specific queue resource item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "notes": { "type": "string" },
+        "isUseful": { "type": "boolean" }
+      },
+      "required": ["id", "resourceId", "reviewedAt", "notes"]
+    },
+    "ResourceLinkToNode": {
+      "title": "ResourceLinkToNode",
+      "description": "A logical link connecting a queue resource to a specific workflow and node",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "workflowId": { "type": "string" },
+        "nodeId": { "type": "string" },
+        "linkedAt": { "type": "string" }
+      },
+      "required": ["id", "resourceId", "workflowId", "nodeId", "linkedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/workflows/{workflowId}": {
+      "schema": "Workflow",
+      "description": "User-specific workflow items"
+    },
+    "/users/{userId}/nodes/{nodeId}": {
+      "schema": "WorkflowNode",
+      "description": "User-specific nodes belonging to workflows"
+    },
+    "/users/{userId}/links/{linkId}": {
+      "schema": "NodeLink",
+      "description": "User-specific linkages between nodes"
+    },
+    "/users/{userId}/versions/{versionId}": {
+      "schema": "WorkflowVersion",
+      "description": "User-specific versions snapshots"
+    },
+    "/users/{userId}/queue_resources/{resourceId}": {
+      "schema": "QueueResource",
+      "description": "User-specific queue resources in inbox/tested/trusted queue"
+    },
+    "/users/{userId}/queue_reviews/{reviewId}": {
+      "schema": "ResourceReview",
+      "description": "User-specific feedback reviews on individual queue resources"
+    },
+    "/users/{userId}/queue_links/{linkId}": {
+      "schema": "ResourceLinkToNode",
+      "description": "User-specific references matching resources with canvas items"
+    },
+    "/users/{userId}/state/{stateId}": {
+      "schema": "object",
+      "description": "Consolidated state backups for workspaces and queue resources"
+    }
+  }
+}

@@ -18,8 +18,11 @@ interface ImportExportProps {
   nodes: WorkflowNode[];
   links: NodeLink[];
   versions: WorkflowVersion[];
+  workflows?: Workflow[];
   onSaveVersion: (versionName: string) => void;
   onRestoreVersion: (version: WorkflowVersion) => void;
+  onDeleteVersion?: (versionId: string) => void;
+  onUpdateVersionName?: (versionId: string, newName: string) => void;
 }
 
 export default function ImportExport({
@@ -27,12 +30,27 @@ export default function ImportExport({
   nodes,
   links,
   versions,
+  workflows,
   onSaveVersion,
-  onRestoreVersion
+  onRestoreVersion,
+  onDeleteVersion,
+  onUpdateVersionName
 }: ImportExportProps) {
   const [versionNameInput, setVersionNameInput] = useState('');
   const [copiedStatus, setCopiedStatus] = useState(false);
   const [showRestoreWarning, setShowRestoreWarning] = useState<string | null>(null);
+
+  // States for Editing/Deleting Backups and Filtering
+  const [backupFilter, setBackupFilter] = useState<'current' | 'all'>('current');
+  const [editingVersionId, setEditingVersionId] = useState<string | null>(null);
+  const [editingVersionName, setEditingVersionName] = useState('');
+  const [confirmDeleteVersionId, setConfirmDeleteVersionId] = useState<string | null>(null);
+
+  const getWorkflowTitle = (wfId: string): string => {
+    if (wfId === workflow.id) return workflow.title;
+    const found = workflows?.find(w => w.id === wfId);
+    return found ? found.title : 'Unknown Card';
+  };
 
   const handleCreateSnapshot = (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,62 +209,208 @@ export default function ImportExport({
           </form>
 
           {/* List of generated historical snapshots */}
-          <div className="space-y-2 mt-3" id="timeline-list">
-            <span className="text-[10px] font-mono text-slate-500 font-extrabold uppercase block">Historical Backups ({versions.length}):</span>
+          <div className="space-y-3.5 mt-3" id="timeline-list">
             
-            <div className="max-h-[140px] overflow-y-auto space-y-2 pr-1" id="versions-scroll-container">
-              {versions.length > 0 ? (
-                versions.map((v) => (
-                  <div 
-                    key={v.id}
-                    className="p-3 bg-white border-2 border-black rounded-lg flex items-center justify-between text-xs transition-colors hover:bg-slate-50 shadow-[2px_2px_0px_#000]"
-                    id={`version-row-${v.id}`}
-                  >
-                    <div>
-                      <span className="font-extrabold text-black block">{v.versionName}</span>
-                      <span className="text-[9px] font-mono text-slate-500 block font-bold leading-relaxed mt-0.5">
-                        {new Date(v.createdAt).toLocaleDateString()} at {new Date(v.createdAt).toLocaleTimeString()} • {v.nodes.length} nodes
-                      </span>
-                    </div>
+            {/* Scoped Filter */}
+            <div className="flex bg-slate-100 p-1 border-2 border-black rounded-lg gap-1" id="backup-scope-selector">
+              <button
+                type="button"
+                onClick={() => setBackupFilter('current')}
+                className={`flex-1 py-1 px-2 text-[10px] md:text-xs font-mono font-black text-center rounded-md transition-all cursor-pointer ${
+                  backupFilter === 'current' 
+                    ? 'bg-blue-600 text-white shadow-[1px_1px_0px_rgba(0,0,0,1)]' 
+                    : 'text-slate-600 hover:text-black hover:bg-slate-200'
+                }`}
+              >
+                📁 This Card ({versions.filter(v => v.workflowId === workflow.id).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBackupFilter('all')}
+                className={`flex-1 py-1 px-2 text-[10px] md:text-xs font-mono font-black text-center rounded-md transition-all cursor-pointer ${
+                  backupFilter === 'all' 
+                    ? 'bg-blue-600 text-white shadow-[1px_1px_0px_rgba(0,0,0,1)]' 
+                    : 'text-slate-600 hover:text-black hover:bg-slate-200'
+                }`}
+              >
+                🌐 All Cards ({versions.length})
+              </button>
+            </div>
 
-                    {showRestoreWarning === v.id ? (
-                      <div className="flex gap-1.5 items-center" id={`warning-actions-area-${v.id}`}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onRestoreVersion(v);
-                            setShowRestoreWarning(null);
-                          }}
-                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white border border-black text-[9px] font-mono font-bold rounded cursor-pointer"
-                          id={`confirm-restore-btn-${v.id}`}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowRestoreWarning(null)}
-                          className="px-2.5 py-1 bg-slate-100 text-slate-700 border border-slate-300 rounded text-[9px] font-mono font-bold cursor-pointer"
-                          id={`cancel-restore-btn-${v.id}`}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setShowRestoreWarning(v.id)}
-                        className="py-1 px-2.5 bg-white hover:bg-slate-50 text-black border-2 border-black rounded-lg cursor-pointer flex items-center gap-1 transition-colors text-[10px] font-mono font-bold shadow-[1px_1px_0px_#000]"
-                        id={`trigger-restore-btn-${v.id}`}
-                      >
-                        <RotateCcw className="w-3 h-3 text-blue-600" />
-                        Restore
-                      </button>
-                    )}
-                  </div>
-                ))
+            <div className="flex justify-between items-center" id="backups-header-counts">
+              <span className="text-[10px] font-mono text-slate-500 font-extrabold uppercase block font-mono">
+                Historical Backups ({backupFilter === 'current' ? versions.filter(v => v.workflowId === workflow.id).length : versions.length}):
+              </span>
+            </div>
+            
+            <div className="max-h-[250px] overflow-y-auto space-y-2.5 pr-1" id="versions-scroll-container">
+              {(backupFilter === 'current' ? versions.filter(v => v.workflowId === workflow.id) : versions).length > 0 ? (
+                (backupFilter === 'current' ? versions.filter(v => v.workflowId === workflow.id) : versions).map((v) => {
+                  const isEditing = editingVersionId === v.id;
+                  const isConfirmDelete = confirmDeleteVersionId === v.id;
+
+                  return (
+                    <div 
+                      key={v.id}
+                      className="p-3 bg-white border-2 border-black rounded-lg flex flex-col gap-2.5 text-xs transition-colors hover:bg-indigo-50/15 shadow-[2.5px_2.5px_0px_rgba(0,0,0,1)] hover:-translate-y-[0.5px] transition-transform"
+                      id={`version-row-${v.id}`}
+                    >
+                      {isEditing ? (
+                        <div className="space-y-2 w-full" id={`edit-version-form-${v.id}`}>
+                          <div>
+                            <label className="block text-[8px] font-mono uppercase text-slate-500 font-bold mb-0.5">Rename Backup Name</label>
+                            <input 
+                              type="text"
+                              value={editingVersionName}
+                              onChange={(e) => setEditingVersionName(e.target.value)}
+                              className="w-full bg-white border-2 border-black font-extrabold text-xs px-2 py-1 rounded outline-none focus:bg-slate-50"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingVersionId(null)}
+                              className="px-2 py-0.5 border border-black text-[9px] font-mono rounded bg-slate-50 hover:bg-slate-100 cursor-pointer"
+                            >
+                              CANCEL
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (editingVersionName.trim() && onUpdateVersionName) {
+                                  onUpdateVersionName(v.id, editingVersionName.trim());
+                                }
+                                setEditingVersionId(null);
+                              }}
+                              className="px-2.5 py-0.5 bg-blue-600 hover:bg-blue-500 text-white font-mono text-[9px] font-bold rounded border border-black cursor-pointer"
+                            >
+                              SAVE
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1 flex-1">
+                          {/* Heading representing version label name */}
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-extrabold text-slate-900 break-words leading-tight">
+                              {v.versionName}
+                            </span>
+                          </div>
+
+                          {/* Sub-label representing Card Title and timestamp metadata */}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-mono text-slate-500 font-bold leading-relaxed">
+                            <span 
+                              className="px-1.5 py-0.5 bg-indigo-50 border-2 border-indigo-200 text-indigo-950 rounded font-black max-w-[130px] truncate animate-fade-in" 
+                              title={getWorkflowTitle(v.workflowId)}
+                            >
+                              📁 {getWorkflowTitle(v.workflowId)}
+                            </span>
+                            <span>•</span>
+                            <span>{new Date(v.createdAt).toLocaleDateString()}</span>
+                            <span>•</span>
+                            <span>{v.nodes.length} nodes</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Version Action buttons */}
+                      {!isEditing && (
+                        <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100 select-none animate-fade-in" id={`version-actions-bar-${v.id}`}>
+                          
+                          {/* Left action button: Restore snapshot */}
+                          {showRestoreWarning === v.id ? (
+                            <div className="flex gap-1 items-center border-2 border-amber-300 bg-amber-50 px-1.5 py-0.5 rounded font-mono text-[8.5px] font-bold animate-fade-in" id={`warning-actions-area-${v.id}`}>
+                              <span className="text-amber-800 pr-0.5">Restore version?</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onRestoreVersion(v);
+                                  setShowRestoreWarning(null);
+                                }}
+                                className="text-amber-900 border border-amber-400 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded shadow-[0.5px_0.5px_0px_#000] cursor-pointer"
+                                id={`confirm-restore-btn-${v.id}`}
+                              >
+                                YES
+                              </button>
+                              <span className="text-amber-300">/</span>
+                              <button
+                                type="button"
+                                onClick={() => setShowRestoreWarning(null)}
+                                className="text-slate-600 hover:text-black underline cursor-pointer"
+                                id={`cancel-restore-btn-${v.id}`}
+                              >
+                                NO
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setShowRestoreWarning(v.id)}
+                              className="py-1 px-2.5 bg-slate-50 hover:bg-slate-100 text-black border-2 border-black rounded-md cursor-pointer flex items-center gap-1 transition-all text-[9.5px] font-mono font-bold shadow-[1px_1px_0px_#000] active:translate-y-[0.5px]"
+                              id={`trigger-restore-btn-${v.id}`}
+                            >
+                              <RotateCcw className="w-2.5 h-2.5 text-blue-600" />
+                              Restore
+                            </button>
+                          )}
+
+                          {/* Right action controls: Rename edit & Delete */}
+                          <div className="flex items-center gap-2" id={`ctrls-delete-edit-${v.id}`}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingVersionId(v.id);
+                                setEditingVersionName(v.versionName);
+                              }}
+                              className="font-mono text-[10px] font-extrabold text-slate-500 hover:text-blue-650 hover:underline cursor-pointer"
+                              title="Rename backup"
+                            >
+                              ✏️ Edit
+                            </button>
+
+                            {isConfirmDelete ? (
+                              <div className="flex items-center gap-1 border-2 border-red-200 bg-red-50 px-1.5 py-0.5 rounded font-mono text-[8.5px] font-bold animate-fade-in" id={`prompt-del-confirm-${v.id}`}>
+                                <span className="text-red-700">Delete?</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onDeleteVersion) onDeleteVersion(v.id);
+                                    setConfirmDeleteVersionId(null);
+                                  }}
+                                  className="text-red-700 bg-red-100 hover:bg-red-200 border border-red-300 px-1 py-0.5 rounded hover:text-red-950 underline hover:font-black cursor-pointer"
+                                >
+                                  YES
+                                </button>
+                                <span className="text-slate-350">/</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteVersionId(null)}
+                                  className="text-slate-500 hover:text-black hover:underline cursor-pointer"
+                                >
+                                  NO
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteVersionId(v.id)}
+                                className="font-mono text-[10px] font-extrabold text-slate-500 hover:text-red-650 hover:underline cursor-pointer"
+                                title="Remove backup permanently"
+                              >
+                                🗑️ Delete
+                              </button>
+                            )}
+                          </div>
+
+                        </div>
+                      )}
+
+                    </div>
+                  );
+                })
               ) : (
                 <div className="text-center p-6 bg-slate-50 border-2 border-dashed border-black rounded-lg" id="empty-history-hud">
-                  <span className="text-[10px] font-mono text-slate-500 font-bold uppercase block">No snapshots record found for this workspace.</span>
+                  <span className="text-[10px] font-mono text-slate-500 font-bold uppercase block font-mono">No snapshots record found for this workspace.</span>
                 </div>
               )}
             </div>

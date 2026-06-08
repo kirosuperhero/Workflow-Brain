@@ -48,8 +48,21 @@ import {
   Sliders,
   LayoutDashboard,
   Layout,
-  Tag
+  Tag,
+  Cloud,
+  Loader2,
+  LogIn,
+  LogOut
 } from 'lucide-react';
+
+import { auth, signInWithPopup, signOut, googleProvider } from './firebase';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { 
+  saveWorkspaceToCloud, 
+  loadWorkspaceFromCloud, 
+  saveQueueToCloud, 
+  loadQueueFromCloud 
+} from './lib/firebaseSync';
 
 const LOCAL_STORAGE_PREFIX = 'workflow_brain_v2';
 
@@ -109,6 +122,12 @@ const SEED_RESOURCES: QueueResource[] = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showCloudSyncProgress, setShowCloudSyncProgress] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
   const [activeTab, setActiveTab] = useState<'workspaces' | 'queue'>('workspaces');
   const [queueResources, setQueueResources] = useState<QueueResource[]>([]);
   const [queueReviews, setQueueReviews] = useState<ResourceReview[]>([]);
@@ -190,41 +209,158 @@ export default function App() {
   // Helper UUID substitute creator
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
-  // First mounting: bootstrap storage or parse presets
+  // Listen for Authentication shifts & Load cloud state
   useEffect(() => {
-    const rawWorkflows = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_workflows`);
-    const rawNodes = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_nodes`);
-    const rawLinks = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_links`);
-    const rawVersions = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_versions`);
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setUser(fbUser);
+      setAuthLoading(false);
+      
+      if (fbUser) {
+        setIsSyncing(true);
+        setSyncMessage('Connecting to Google Cloud account...');
+        setShowCloudSyncProgress(true);
+        
+        try {
+          const cloudWS = await loadWorkspaceFromCloud(fbUser.uid);
+          const cloudQ = await loadQueueFromCloud(fbUser.uid);
+          
+          if (cloudWS) {
+            setWorkflows(cloudWS.workflows);
+            setNodes(cloudWS.nodes);
+            setLinks(cloudWS.links);
+            setVersions(cloudWS.versions);
+            setSyncMessage('Cloud workspace matched successfully!');
+          } else {
+            // First user login: automatically persist their current local cache to free cloud database
+            setSyncMessage('Uploading local workspace to your cloud account...');
+            const rawW = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_workflows`);
+            const rawN = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_nodes`);
+            const rawL = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_links`);
+            const rawV = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_versions`);
+            
+            const currentW = rawW ? JSON.parse(rawW) : workflows;
+            const currentN = rawN ? JSON.parse(rawN) : nodes;
+            const currentL = rawL ? JSON.parse(rawL) : links;
+            const currentV = rawV ? JSON.parse(rawV) : versions;
+            
+            const finalW = currentW.length > 0 ? currentW : [];
+            const finalN = currentN.length > 0 ? currentN : [];
+            const finalL = currentL.length > 0 ? currentL : [];
+            const finalV = currentV.length > 0 ? currentV : [];
+            
+            await saveWorkspaceToCloud(fbUser.uid, finalW, finalN, finalL, finalV);
+            setWorkflows(finalW);
+            setNodes(finalN);
+            setLinks(finalL);
+            setVersions(finalV);
+          }
+          
+          if (cloudQ) {
+            setQueueResources(cloudQ.queueResources);
+            setQueueReviews(cloudQ.queueReviews);
+            setQueueLinks(cloudQ.queueLinks);
+          } else {
+            // Backup initial queue setup
+            const rawQR = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`);
+            const rawQRev = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`);
+            const rawQL = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_links`);
+            
+            const currentQR = rawQR ? JSON.parse(rawQR) : (queueResources.length > 0 ? queueResources : SEED_RESOURCES);
+            const currentQRev = rawQRev ? JSON.parse(rawQRev) : queueReviews;
+            const currentQL = rawQL ? JSON.parse(rawQL) : queueLinks;
+            
+            await saveQueueToCloud(fbUser.uid, currentQR, currentQRev, currentQL);
+            setQueueResources(currentQR);
+            setQueueReviews(currentQRev);
+            setQueueLinks(currentQL);
+          }
+          
+          setSyncMessage('All changes synchronized!');
+          setTimeout(() => setShowCloudSyncProgress(false), 2000);
+        } catch (error) {
+          console.error('Error syncing cloud structures:', error);
+          setSyncMessage('Cloud connection failed. Using local storage instead.');
+          setTimeout(() => setShowCloudSyncProgress(false), 3000);
+        } finally {
+          setIsSyncing(false);
+        }
+      } else {
+        // Guest mode/logged out - read from local storage
+        const rawWorkflows = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_workflows`);
+        const rawNodes = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_nodes`);
+        const rawLinks = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_links`);
+        const rawVersions = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_versions`);
 
-    if (rawWorkflows && rawNodes && rawLinks) {
-      setWorkflows(JSON.parse(rawWorkflows));
-      setNodes(JSON.parse(rawNodes));
-      setLinks(JSON.parse(rawLinks));
-      setVersions(rawVersions ? JSON.parse(rawVersions) : []);
-    } else {
-      // First load: seed database using templates values
-      seedInitialDatabase();
-    }
+        if (rawWorkflows && rawNodes && rawLinks) {
+          setWorkflows(JSON.parse(rawWorkflows));
+          setNodes(JSON.parse(rawNodes));
+          setLinks(JSON.parse(rawLinks));
+          setVersions(rawVersions ? JSON.parse(rawVersions) : []);
+        } else {
+          // If no local workflows exist, seed templates
+          seedInitialDatabase();
+        }
 
-    // Load Experimental Queue data
-    const rawResources = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`);
-    const rawQueueReviews = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`);
-    const rawQueueLinks = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_links`);
+        const rawResources = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`);
+        const rawQueueReviews = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`);
+        const rawQueueLinks = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}_queue_links`);
 
-    if (rawResources) {
-      setQueueResources(JSON.parse(rawResources));
-      setQueueReviews(rawQueueReviews ? JSON.parse(rawQueueReviews) : []);
-      setQueueLinks(rawQueueLinks ? JSON.parse(rawQueueLinks) : []);
-    } else {
-      setQueueResources(SEED_RESOURCES);
-      setQueueReviews([]);
-      setQueueLinks([]);
-      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`, JSON.stringify(SEED_RESOURCES));
-      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`, JSON.stringify([]));
-      localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_links`, JSON.stringify([]));
-    }
+        if (rawResources) {
+          setQueueResources(JSON.parse(rawResources));
+          setQueueReviews(rawQueueReviews ? JSON.parse(rawQueueReviews) : []);
+          setQueueLinks(rawQueueLinks ? JSON.parse(rawQueueLinks) : []);
+        } else {
+          setQueueResources(SEED_RESOURCES);
+          setQueueReviews([]);
+          setQueueLinks([]);
+        }
+      }
+    });
+    
+    return () => unsubscribe();
   }, []);
+
+  // Auth logins & logout triggers
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsSyncing(true);
+      setSyncMessage('Opening Google Sign-In secure window...');
+      setShowCloudSyncProgress(true);
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Google Sign-In failed:', error);
+      setSyncMessage('Authentication canceled or failed.');
+      setTimeout(() => setShowCloudSyncProgress(false), 3000);
+      setIsSyncing(false);
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    if (window.confirm('Do you want to sign out? Your workflows and queue are fully saved in Google Cloud.')) {
+      try {
+        setIsSyncing(true);
+        setSyncMessage('Signing out...');
+        setShowCloudSyncProgress(true);
+        await signOut(auth);
+        
+        // Clear memories when signed out to present a clean workspace for next login
+        setWorkflows([]);
+        setNodes([]);
+        setLinks([]);
+        setVersions([]);
+        setQueueResources([]);
+        setQueueReviews([]);
+        setQueueLinks([]);
+        
+        setSyncMessage('Signed out successfully! Loading fresh guest workspace...');
+        setTimeout(() => setShowCloudSyncProgress(false), 2000);
+      } catch (error) {
+        console.error('Google Sign-Out failed:', error);
+      } finally {
+        setIsSyncing(false);
+      }
+    }
+  };
 
   // Sync to database triggers
   const saveStateToStorage = (nextWorkflows: Workflow[], nextNodes: WorkflowNode[], nextLinks: NodeLink[], nextVersions: WorkflowVersion[]) => {
@@ -232,12 +368,22 @@ export default function App() {
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_nodes`, JSON.stringify(nextNodes));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_links`, JSON.stringify(nextLinks));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_versions`, JSON.stringify(nextVersions));
+
+    if (auth.currentUser) {
+      saveWorkspaceToCloud(auth.currentUser.uid, nextWorkflows, nextNodes, nextLinks, nextVersions)
+        .catch(err => console.error('Cloud workspace saves failed:', err));
+    }
   };
 
   const saveQueueStateToStorage = (nextResources: QueueResource[], nextReviews: ResourceReview[], nextLinks: ResourceLinkToNode[]) => {
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_resources`, JSON.stringify(nextResources));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_reviews`, JSON.stringify(nextReviews));
     localStorage.setItem(`${LOCAL_STORAGE_PREFIX}_queue_links`, JSON.stringify(nextLinks));
+
+    if (auth.currentUser) {
+      saveQueueToCloud(auth.currentUser.uid, nextResources, nextReviews, nextLinks)
+        .catch(err => console.error('Cloud queue saves failed:', err));
+    }
   };
 
   const seedInitialDatabase = () => {
@@ -535,7 +681,7 @@ export default function App() {
     saveStateToStorage(workflows, nextState.nodes, nextState.links, versions);
   };
 
-  const handleUpdateNodePosition = (nodeId: string, x: number, y: number) => {
+  const handleUpdateNodePosition = (nodeId: string, x: number, y: number, shouldSave = true) => {
     const nextNodes = nodes.map(n => {
       if (n.id === nodeId) {
         return { ...n, positionX: x, positionY: y, updatedAt: new Date().toISOString() };
@@ -543,7 +689,9 @@ export default function App() {
       return n;
     });
     setNodes(nextNodes);
-    saveStateToStorage(workflows, nextNodes, links, versions);
+    if (shouldSave) {
+      saveStateToStorage(workflows, nextNodes, links, versions);
+    }
   };
 
   const handleUpdateNodeData = (nodeId: string, updatedFields: Partial<WorkflowNode>) => {
@@ -665,6 +813,23 @@ export default function App() {
     setLinks(nextLinks);
     setSelectedNodeId(null);
     saveStateToStorage(workflows, nextNodes, nextLinks, versions);
+  };
+
+  const handleDeleteVersion = (versionId: string) => {
+    const nextVersions = versions.filter(v => v.id !== versionId);
+    setVersions(nextVersions);
+    saveStateToStorage(workflows, nodes, links, nextVersions);
+  };
+
+  const handleUpdateVersionName = (versionId: string, newName: string) => {
+    const nextVersions = versions.map(v => {
+      if (v.id === versionId) {
+        return { ...v, versionName: newName };
+      }
+      return v;
+    });
+    setVersions(nextVersions);
+    saveStateToStorage(workflows, nodes, links, nextVersions);
   };
 
   const resetAllState = () => {
@@ -1435,6 +1600,55 @@ export default function App() {
             </div>
           )}
 
+          {/* Google Account Status Panel */}
+          <div className="border-t-2 border-black p-3.5 bg-slate-50 flex flex-col gap-2 shrink-0 select-none">
+            {authLoading ? (
+              <div className="flex items-center gap-2 justify-center py-2 text-slate-400 font-mono text-[9px] uppercase font-bold animate-pulse">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking login status...
+              </div>
+            ) : user ? (
+              <div className="flex items-center justify-between gap-2 border-2 border-black bg-emerald-50/75 rounded-lg p-2.5 font-mono text-[10px] shadow-[2px_2px_0px_rgba(0,0,0,1)]">
+                <div className="flex items-center gap-2.5 truncate">
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName || 'User'} className="w-7 h-7 rounded-full border-2 border-black shrink-0" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white border-2 border-black text-[10px] uppercase font-black shrink-0">
+                      {user.displayName?.charAt(0) || 'U'}
+                    </div>
+                  )}
+                  <div className="flex flex-col truncate">
+                    <span className="font-extrabold text-black leading-tight truncate">{user.displayName || 'Google Account'}</span>
+                    <span className="text-[8px] text-emerald-700 font-black flex items-center gap-1 uppercase">
+                      <Cloud className="w-3 h-3 text-emerald-600" /> Cloud Saved
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={handleGoogleSignOut}
+                  className="p-1 hover:bg-slate-200 hover:text-red-650 border border-slate-300 rounded cursor-pointer transition-colors shrink-0 text-slate-500 bg-white"
+                  title="Sign Out Account"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 bg-slate-100 border-2 border-dashed border-slate-350 p-2.5 rounded-lg">
+                <div className="flex flex-col gap-0.5 text-[9px] font-mono leading-tight">
+                  <span className="font-black text-black uppercase tracking-wide">☁️ Backup Workspace?</span>
+                  <span className="text-slate-500 text-[8px] tracking-tight">Sign in with Google to auto-save and synch across devices.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 border-2 border-black rounded-lg text-[10px] font-mono font-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-[2px_2px_0px_rgba(0,0,0,1)] hover:shadow-[3px_3px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:shadow-[1px_1px_0px_rgba(0,0,0,1)] transition-all text-slate-800"
+                >
+                  <LogIn className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  Sign In with Google
+                </button>
+              </div>
+            )}
+          </div>
+
         </div>
       ) : null}
 
@@ -1659,8 +1873,11 @@ export default function App() {
               nodes={activeWorkflowNodes}
               links={activeWorkflowLinks}
               versions={versions}
+              workflows={workflows}
               onSaveVersion={(verName) => handleSaveVersion(activeWorkflow.id, verName)}
               onRestoreVersion={handleRestoreVersion}
+              onDeleteVersion={handleDeleteVersion}
+              onUpdateVersionName={handleUpdateVersionName}
             />
           </div>
         </div>
@@ -1769,6 +1986,21 @@ export default function App() {
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Cloud Synchronization Overlay Indicator */}
+      {showCloudSyncProgress && (
+        <div className="fixed bottom-4 right-4 bg-black border-2 border-black rounded-lg p-3 text-white z-50 flex items-center gap-3 font-mono text-[10px] shadow-[4px_4px_0px_rgba(0,0,0,0.5)] animate-fade-in select-none">
+          {isSyncing ? (
+            <Loader2 className="w-4 h-4 text-blue-400 animate-spin shrink-0" />
+          ) : (
+            <div className="w-4 h-4 rounded-full bg-emerald-500 border border-black flex items-center justify-center text-white text-[8px] font-bold shrink-0">✓</div>
+          )}
+          <div className="flex flex-col">
+            <span className="font-extrabold uppercase tracking-wide text-slate-100 leading-none">Google Cloud Sync</span>
+            <span className="text-slate-400 text-[9px] mt-1 leading-tight">{syncMessage}</span>
           </div>
         </div>
       )}

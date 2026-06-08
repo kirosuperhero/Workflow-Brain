@@ -56,7 +56,10 @@ export default function Sidebar({
   onDuplicateNodeToWorkflow,
   onRemoveTagGlobally
 }: SidebarProps) {
-  const selectedNode = node;
+  const selectedNode = node ? {
+    ...node,
+    tags: (node.tags || []).filter(t => !['free', 'daily credits', 'monthly credits'].includes(t.trim().toLowerCase()))
+  } : null;
   const allLinks = links;
   
   const matchingQueueLink = selectedNode ? queueLinks.find(l => l.nodeId === selectedNode.id) : null;
@@ -69,13 +72,21 @@ export default function Sidebar({
     }
   };
   // Navigation Tabs: edit vs citations reviews timeline
-  const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'reviews'>('edit');
+  const [activeTab, setActiveTab] = useState<'edit' | 'preview' | 'reviews' | 'prompts'>('edit');
 
   // Input States for New Review Form
   const [reviewAuthor, setReviewAuthor] = useState('');
   const [reviewComment, setReviewComment] = useState('');
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewStatus, setReviewStatus] = useState<NodeStatus>('trusted');
+
+  // Inline review editing states
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [editingReviewAuthor, setEditingReviewAuthor] = useState('');
+  const [editingReviewComment, setEditingReviewComment] = useState('');
+  const [editingReviewRating, setEditingReviewRating] = useState(5);
+  const [editingReviewStatus, setEditingReviewStatus] = useState<NodeStatus>('trusted');
+  const [confirmingDeleteReviewId, setConfirmingDeleteReviewId] = useState<string | null>(null);
 
   // Multi-tags input local state helper
   const [newTagInput, setNewTagInput] = useState('');
@@ -97,6 +108,15 @@ export default function Sidebar({
   const [showTitleAutoSuggest, setShowTitleAutoSuggest] = useState(false);
   const [showUrlAutoSuggest, setShowUrlAutoSuggest] = useState(false);
 
+  // Prompt Saver local states
+  const [newPromptTitle, setNewPromptTitle] = useState('');
+  const [newPromptText, setNewPromptText] = useState('');
+  const [editingPromptId, setEditingPromptId] = useState<string | null>(null);
+  const [editingPromptTitle, setEditingPromptTitle] = useState('');
+  const [editingPromptText, setEditingPromptText] = useState('');
+  const [confirmingDeletePromptId, setConfirmingDeletePromptId] = useState<string | null>(null);
+  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+
   // Reset confirming state when selecting a different node
   React.useEffect(() => {
     setIsConfirmingDelete(false);
@@ -104,6 +124,18 @@ export default function Sidebar({
     setEditingTagIndex(null);
     setEditingTagValue('');
     setConfirmDeleteTag(null);
+    setEditingReviewId(null);
+    setEditingReviewAuthor('');
+    setEditingReviewComment('');
+    setConfirmingDeleteReviewId(null);
+    // Clear prompt state on change
+    setNewPromptTitle('');
+    setNewPromptText('');
+    setEditingPromptId(null);
+    setEditingPromptTitle('');
+    setEditingPromptText('');
+    setConfirmingDeletePromptId(null);
+    setCopiedPromptId(null);
   }, [selectedNode?.id]);
 
   // Autocomplete suggestions calculation
@@ -229,10 +261,11 @@ export default function Sidebar({
   const allWorkspaceUniqueTags = (() => {
     if (!globalNodes) return [];
     const allUnique = new Set<string>();
+    const excludedTags = ['free', 'daily credits', 'monthly credits'];
     globalNodes.forEach(n => {
       if (n.tags && Array.isArray(n.tags)) {
         n.tags.forEach(t => {
-          if (t && t.trim()) {
+          if (t && t.trim() && !excludedTags.includes(t.trim().toLowerCase())) {
             allUnique.add(t.trim().toLowerCase());
           }
         });
@@ -279,36 +312,152 @@ export default function Sidebar({
     setActiveTab('reviews'); // Flip to timeline to view result
   };
 
+  const handleStartEditReview = (review: any) => {
+    setEditingReviewId(review.id);
+    setEditingReviewAuthor(review.author);
+    setEditingReviewComment(review.comment);
+    setEditingReviewRating(review.rating);
+    setEditingReviewStatus(review.status);
+  };
+
+  const handleSaveEditReview = (reviewId: string) => {
+    if (!editingReviewAuthor.trim() || !editingReviewComment.trim()) return;
+    const updatedReviews = (selectedNode.reviews || []).map(r => {
+      if (r.id === reviewId) {
+        return {
+          ...r,
+          author: editingReviewAuthor.trim(),
+          comment: editingReviewComment.trim(),
+          rating: editingReviewRating,
+          status: editingReviewStatus
+        };
+      }
+      return r;
+    });
+
+    onUpdateNode({
+      ...selectedNode,
+      reviews: updatedReviews
+    });
+    setEditingReviewId(null);
+  };
+
+  const handleDeleteReview = (reviewId: string) => {
+    const updatedReviews = (selectedNode.reviews || []).filter(r => r.id !== reviewId);
+    onUpdateNode({
+      ...selectedNode,
+      reviews: updatedReviews
+    });
+  };
+
+  // Prompt Saver Handlers
+  const handleAddPrompt = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newPromptText.trim()) return;
+    const titleVal = newPromptTitle.trim() || `Prompt #${(selectedNode.prompts?.length || 0) + 1}`;
+    const newPrompt = {
+      id: Math.random().toString(36).substring(2, 11),
+      title: titleVal,
+      text: newPromptText.trim(),
+      createdAt: new Date().toISOString()
+    };
+    const updatedPrompts = [...(selectedNode.prompts || []), newPrompt];
+    handleChange('prompts', updatedPrompts);
+    setNewPromptTitle('');
+    setNewPromptText('');
+  };
+
+  const handleStartEditPrompt = (prompt: any) => {
+    setEditingPromptId(prompt.id);
+    setEditingPromptTitle(prompt.title);
+    setEditingPromptText(prompt.text);
+  };
+
+  const handleSaveEditPrompt = (promptId: string) => {
+    if (!editingPromptText.trim()) return;
+    const titleVal = editingPromptTitle.trim() || `Prompt`;
+    const updatedPrompts = (selectedNode.prompts || []).map(p => {
+      if (p.id === promptId) {
+        return {
+          ...p,
+          title: titleVal,
+          text: editingPromptText.trim()
+        };
+      }
+      return p;
+    });
+    handleChange('prompts', updatedPrompts);
+    setEditingPromptId(null);
+  };
+
+  const handleDeletePrompt = (promptId: string) => {
+    const updatedPrompts = (selectedNode.prompts || []).filter(p => p.id !== promptId);
+    handleChange('prompts', updatedPrompts);
+  };
+
+  const handleCopyPromptText = (promptId: string, text: string) => {
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedPromptId(promptId);
+        setTimeout(() => setCopiedPromptId(null), 1800);
+      }).catch(() => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        setCopiedPromptId(promptId);
+        setTimeout(() => setCopiedPromptId(null), 1800);
+      });
+    } catch (err) {
+      // safe fallback
+    }
+  };
+
   return (
     <div className="lg:col-span-4 bg-white border-2 border-black rounded-lg flex flex-col overflow-hidden h-full shadow-[4px_4px_0px_#000]" id="sidebar-inspector-panel">
       
       {/* Sidebar navigation headers */}
-      <div className="flex border-b-2 border-black bg-slate-50" id="sidebar-tabs">
+      <div className="flex border-b-2 border-black bg-slate-50 overflow-x-auto scroller-hidden" id="sidebar-tabs">
         <button
           onClick={() => setActiveTab('edit')}
-          className={`flex-1 py-3 text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer ${
+          className={`flex-1 min-w-[70px] py-3 text-[10px] md:text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer whitespace-nowrap px-1 ${
             activeTab === 'edit' 
               ? 'text-blue-600 border-blue-600 bg-white' 
               : 'text-slate-500 border-transparent hover:text-black hover:bg-slate-100'
           }`}
           id="tab-edit-trigger"
         >
-          Form Inspector
+          Inspector
         </button>
         <button
           onClick={() => setActiveTab('preview')}
-          className={`flex-1 py-3 text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer ${
+          className={`flex-1 min-w-[70px] py-3 text-[10px] md:text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer whitespace-nowrap px-1 ${
             activeTab === 'preview' 
               ? 'text-blue-600 border-blue-600 bg-white' 
               : 'text-slate-500 border-transparent hover:text-black hover:bg-slate-100'
           }`}
           id="tab-preview-trigger"
         >
-          Markdown Preview
+          Preview
+        </button>
+        <button
+          onClick={() => setActiveTab('prompts')}
+          className={`flex-1 min-w-[70px] py-3 text-[10px] md:text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer whitespace-nowrap px-1 ${
+            activeTab === 'prompts' 
+              ? 'text-blue-600 border-blue-600 bg-white' 
+              : 'text-slate-500 border-transparent hover:text-black hover:bg-slate-100'
+          }`}
+          id="tab-prompts-trigger"
+        >
+          Prompts ({selectedNode.prompts?.length || 0})
         </button>
         <button
           onClick={() => setActiveTab('reviews')}
-          className={`flex-1 py-3 text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer ${
+          className={`flex-1 min-w-[70px] py-3 text-[10px] md:text-xs font-mono font-black text-center border-b-2 transition-all cursor-pointer whitespace-nowrap px-1 ${
             activeTab === 'reviews' 
               ? 'text-blue-600 border-blue-600 bg-white' 
               : 'text-slate-500 border-transparent hover:text-black hover:bg-slate-100'
@@ -498,6 +647,8 @@ export default function Sidebar({
                 id="node-content-textarea"
               />
             </div>
+
+
 
             {/* Citation Source anchors */}
             <div className="space-y-2 border-t border-slate-100 pt-3" id="citation-source-inputs">
@@ -788,15 +939,9 @@ export default function Sidebar({
                           key={tier}
                           type="button"
                           onClick={() => {
-                            // Perform a single contiguous state save to resolve the 2-clicks async reactivity lag!
-                            const otherTiers = ['Free', 'Daily credits', 'Monthly credits'].filter(t => t !== tier);
-                            const nextTags = selectedNode.tags.filter(t => !otherTiers.includes(t));
-                            const updatedTags = nextTags.includes(tier) ? nextTags : [...nextTags, tier];
-                            
                             onUpdateNode({
                               ...selectedNode,
-                              pricingTier: tier,
-                              tags: updatedTags
+                              pricingTier: tier
                             });
                           }}
                           className={`text-[9px] font-mono py-1 px-1 border-2 rounded transition-all cursor-pointer ${btnStyle}`}
@@ -1115,33 +1260,150 @@ export default function Sidebar({
                     className="bg-white border-2 border-black p-3.5 rounded-lg space-y-1 shadow-[2px_2px_0px_#000]"
                     id={`timeline-review-${review.id}`}
                   >
-                    <div className="flex justify-between items-start text-[10px]" id={`reviewer-badge-head-${review.id}`}>
-                      <div className="flex items-center gap-1.5" id={`review-reviewer-badge-${review.id}`}>
-                        <div className="w-5 h-5 rounded-full bg-blue-50 border-2 border-black flex items-center justify-center text-blue-600 text-[9px] font-mono font-black shadow-[1px_1px_0px_#000]">
-                          {review.author.slice(0, 1).toUpperCase()}
+                    {editingReviewId === review.id ? (
+                      <div className="space-y-3.5 text-xs text-slate-800" id={`edit-review-container-${review.id}`}>
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[9px] font-mono font-bold text-slate-500 uppercase mb-0.5">Author Name</label>
+                            <input 
+                              type="text"
+                              value={editingReviewAuthor}
+                              onChange={(e) => setEditingReviewAuthor(e.target.value)}
+                              className="w-full bg-white border-2 border-black text-slate-900 font-bold text-xs rounded px-2 py-1 outline-none focus:bg-slate-50"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-mono font-bold text-slate-500 uppercase mb-0.5">Certified Status</label>
+                            <select
+                              value={editingReviewStatus}
+                              onChange={(e) => setEditingReviewStatus(e.target.value as NodeStatus)}
+                              className="w-full bg-white border-2 border-black text-slate-900 font-bold text-xs rounded px-1.5 py-1 outline-none cursor-pointer focus:bg-slate-50"
+                            >
+                              <option value="trusted">Trusted Verified</option>
+                              <option value="experimental">Experimental</option>
+                              <option value="archived">Archived / Legacy</option>
+                            </select>
+                          </div>
                         </div>
-                        <span className="text-black font-extrabold pr-1">{review.author}</span>
-                      </div>
-                      
-                      <div className="flex items-center gap-1" id={`reviewer-pills-${review.id}`}>
-                        <span className="font-mono text-[9px] text-slate-500 font-semibold">{new Date(review.timestamp || '').toLocaleDateString()}</span>
-                        <span className={`status-badge text-[8px] ${
-                          review.status === 'trusted' ? 'text-emerald-700 bg-emerald-50 border-emerald-500' : 'text-blue-700 bg-blue-50 border-blue-500'
-                        }`}>
-                          {review.status}
-                        </span>
-                      </div>
-                    </div>
 
-                    <p className="text-[11px] text-slate-700 font-medium leading-relaxed font-sans pt-1 select-text">
-                      "{review.comment}"
-                    </p>
+                        <div>
+                          <label className="block text-[9px] font-mono font-bold text-slate-500 uppercase mb-0.5">Assessment Notes</label>
+                          <textarea 
+                            rows={3}
+                            value={editingReviewComment}
+                            onChange={(e) => setEditingReviewComment(e.target.value)}
+                            className="w-full bg-white border-2 border-black text-slate-900 font-medium text-xs rounded px-2.5 py-1.5 outline-none resize-none font-sans focus:bg-slate-50"
+                          />
+                        </div>
 
-                    <div className="flex items-center gap-0.5 pt-1.5" id={`review-rating-banner-${review.id}`}>
-                      {[1, 2, 3, 4, 5].map((idx) => (
-                        <Star key={idx} className={`w-3 h-3 ${idx <= review.rating ? 'text-amber-500 fill-amber-400' : 'text-slate-200'}`} />
-                      ))}
-                    </div>
+                        <div className="flex justify-between items-center pt-1 border-t border-slate-100">
+                          <div className="flex items-center gap-0.5" id={`editing-review-rating-banner-${review.id}`}>
+                            <span className="text-[9px] font-mono font-bold text-slate-500 uppercase pr-1.5">Utility:</span>
+                            {[1, 2, 3, 4, 5].map((idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setEditingReviewRating(idx)}
+                                className="p-0.5 hover:scale-110 transition-transform"
+                              >
+                                <Star className={`w-3.5 h-3.5 ${idx <= editingReviewRating ? 'text-amber-500 fill-amber-400' : 'text-slate-300'}`} />
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingReviewId(null)}
+                              className="px-2.5 py-1 border-2 border-black rounded text-[10px] font-mono font-bold bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer shadow-[1px_1px_0px_#000]"
+                            >
+                              CANCEL
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEditReview(review.id)}
+                              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded border-2 border-black text-[10px] font-mono font-bold uppercase cursor-pointer shadow-[1px_1px_0px_#000]"
+                            >
+                              SAVE
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-start text-[10px]" id={`reviewer-badge-head-${review.id}`}>
+                          <div className="flex items-center gap-1.5" id={`review-reviewer-badge-${review.id}`}>
+                            <div className="w-5 h-5 rounded-full bg-blue-50 border-2 border-black flex items-center justify-center text-blue-600 text-[9px] font-mono font-black shadow-[1px_1px_0px_#000]">
+                              {review.author.slice(0, 1).toUpperCase()}
+                            </div>
+                            <span className="text-black font-extrabold pr-1">{review.author}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-1.5" id={`reviewer-pills-${review.id}`}>
+                            <span className="font-mono text-[9px] text-slate-500 font-semibold">{new Date(review.timestamp || '').toLocaleDateString()}</span>
+                            <span className={`status-badge text-[8px] ${
+                              review.status === 'trusted' ? 'text-emerald-700 bg-emerald-50 border-emerald-500' : 'text-blue-700 bg-blue-50 border-blue-500'
+                            }`}>
+                              {review.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-[11px] text-slate-700 font-medium leading-relaxed font-sans pt-1 select-text">
+                          "{review.comment}"
+                        </p>
+
+                        <div className="flex justify-between items-center pt-1.5 border-t border-slate-50 mt-1" id={`review-action-banner-${review.id}`}>
+                          <div className="flex items-center gap-0.5">
+                            {[1, 2, 3, 4, 5].map((idx) => (
+                              <Star key={idx} className={`w-3 h-3 ${idx <= review.rating ? 'text-amber-500 fill-amber-400' : 'text-slate-200'}`} />
+                            ))}
+                          </div>
+                          
+                          <div className="flex gap-2.5 items-center select-none" id={`review-controls-line-${review.id}`}>
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditReview(review)}
+                              className="text-[9px] font-mono font-bold text-slate-500 hover:text-blue-600 hover:underline cursor-pointer flex items-center gap-0.5 transition-colors"
+                            >
+                              ✏️ Edit
+                            </button>
+                            
+                            {confirmingDeleteReviewId === review.id ? (
+                              <div className="flex items-center gap-1 border border-red-200 bg-red-50 px-1 py-0.5 rounded font-mono text-[8.5px] font-bold animate-fade-in" id="delete-confirmation-bubble">
+                                <span className="text-red-700 pr-0.5">Sure?</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleDeleteReview(review.id);
+                                    setConfirmingDeleteReviewId(null);
+                                  }}
+                                  className="text-red-700 hover:text-red-950 underline hover:font-black cursor-pointer"
+                                >
+                                  YES
+                                </button>
+                                <span className="text-red-350">/</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmingDeleteReviewId(null)}
+                                  className="text-slate-500 hover:text-black hover:underline cursor-pointer"
+                                >
+                                  NO
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingDeleteReviewId(review.id)}
+                                className="text-[9px] font-mono font-bold text-slate-500 hover:text-red-650 hover:underline cursor-pointer flex items-center gap-0.5 transition-colors"
+                              >
+                                🗑️ Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))
               ) : (
@@ -1150,6 +1412,229 @@ export default function Sidebar({
                   <p className="text-[10px] text-slate-500 font-bold uppercase">No Audit History Registered</p>
                   <p className="text-[10px] text-slate-405 leading-relaxed font-medium mt-1">
                     Fill the form at the top to record execution metrics, notes of experimental features, or validation audits inside the workflow node chronology logs.
+                  </p>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+        {/* TAB 4: PROMPT SAVER & TEMPLATE MANAGER */}
+        {activeTab === 'prompts' && (
+          <div className="space-y-4 font-sans animate-fade-in" id="prompts-manager-panel">
+            
+            <div className="border-b border-slate-100 pb-2 flex justify-between items-center" id="prompts-title-section">
+              <div>
+                <span className="text-[9px] font-mono font-semibold text-slate-400 block uppercase">Prompt templates</span>
+                <h4 className="text-xs font-bold text-black font-mono leading-none">🧠 Prompt Saver & Manager</h4>
+              </div>
+              <span className="text-[9px] bg-slate-100 text-slate-700 px-2 py-0.5 font-mono border-2 border-black font-extrabold rounded-md shadow-[1px_1px_0px_#000]">
+                {selectedNode.prompts?.length || 0} Saved
+              </span>
+            </div>
+
+            <p className="text-[11.5px] text-slate-500 leading-normal font-medium">
+              Store recurrent system guidelines, code assistant commands, and fine-tuning prompts. Copy them with 1-Click for quick clipboard utilization!
+            </p>
+
+            {/* Form to add a new prompt */}
+            <div className="bg-indigo-50/40 border-2 border-black rounded-lg p-3 space-y-3 shadow-[2.5px_2.5px_0px_#000]" id="prompts-add-form-container">
+              <span className="text-[9.5px] font-mono text-indigo-950 uppercase tracking-tight font-black block flex items-center gap-1">
+                ⚡ Register a New Prompt Template
+              </span>
+              
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleAddPrompt();
+                }}
+                className="space-y-2.5"
+              >
+                <div>
+                  <label className="block text-[8px] font-mono text-slate-500 uppercase font-bold mb-0.5">Template Title</label>
+                  <input 
+                    type="text"
+                    placeholder="e.g., Code Review Standard, Tone Shift"
+                    value={newPromptTitle}
+                    onChange={(e) => setNewPromptTitle(e.target.value)}
+                    className="w-full bg-white border-2 border-black text-slate-905 font-bold text-xs rounded px-2.5 py-1.5 focus:bg-slate-50 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[8px] font-mono text-slate-500 uppercase font-bold mb-0.5">Instruction Text / Prompt Body *</label>
+                  <textarea 
+                    rows={3}
+                    required
+                    placeholder="Copy and paste prompt template or system rules..."
+                    value={newPromptText}
+                    onChange={(e) => setNewPromptText(e.target.value)}
+                    className="w-full bg-white border-2 border-black text-slate-905 font-medium text-xs rounded px-2.5 py-1.5 focus:bg-slate-50 outline-none resize-none font-mono"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={!newPromptText.trim()}
+                    className={`font-mono font-black text-[9.5px] px-3 py-1.5 border-2 border-black rounded transition-all cursor-pointer ${
+                      newPromptText.trim() 
+                        ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-[1.5px_1.5px_0px_#000] active:translate-y-[0.5px]'
+                        : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                    }`}
+                  >
+                    ADD PROMPT TEMPLATE
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* List of prompts */}
+            <div className="space-y-3 pt-1" id="prompts-display-root">
+              <span className="text-[9px] font-mono text-slate-450 uppercase font-bold block">
+                Your Saved Prompts Checklist:
+              </span>
+
+              {selectedNode.prompts && selectedNode.prompts.length > 0 ? (
+                <div className="space-y-3" id="saved-prompts-list">
+                  {selectedNode.prompts.map((p) => {
+                    const isEditing = editingPromptId === p.id;
+                    const isCopied = copiedPromptId === p.id;
+                    const isConfirmingDelete = confirmingDeletePromptId === p.id;
+
+                    return (
+                      <div 
+                        key={p.id}
+                        className="bg-white border-2 border-black rounded-lg p-3.5 space-y-2 shadow-[3px_3px_0px_rgba(0,0,0,1)] transition-all hover:-translate-y-[0.5px] relative"
+                        id={`prompt-item-container-${p.id}`}
+                      >
+                        {isEditing ? (
+                          <div className="space-y-3 text-xs text-slate-800" id={`prompt-editing-form-${p.id}`}>
+                            <div>
+                              <label className="block text-[8.5px] font-mono uppercase text-slate-500 font-bold mb-0.5">Prompt Title</label>
+                              <input 
+                                type="text"
+                                value={editingPromptTitle}
+                                onChange={(e) => setEditingPromptTitle(e.target.value)}
+                                className="w-full bg-white border-2 border-black text-xs font-bold px-2 py-1 rounded outline-none focus:bg-slate-50"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8.5px] font-mono uppercase text-slate-500 font-bold mb-0.5">Prompt Body Code/Rules</label>
+                              <textarea
+                                rows={4}
+                                value={editingPromptText}
+                                onChange={(e) => setEditingPromptText(e.target.value)}
+                                className="w-full bg-white border-2 border-black text-xs font-medium px-2 py-1.5 rounded outline-none resize-none font-mono focus:bg-slate-50"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-1.5 pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingPromptId(null)}
+                                className="px-2.5 py-1 border border-black text-[9px] font-mono rounded bg-slate-50 hover:bg-slate-100 cursor-pointer"
+                              >
+                                CANCEL
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditPrompt(p.id)}
+                                className="px-3.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-mono text-[9px] font-bold rounded border border-black cursor-pointer"
+                              >
+                                SAVE CHANGES
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Display mode */}
+                            <div className="flex justify-between items-center bg-slate-50 -mx-3.5 -mt-3.5 px-3.5 py-1.5 rounded-t-lg border-b-2 border-black" id={`prompt-header-${p.id}`}>
+                              <span className="text-[10.5px] font-extrabold text-slate-900 font-mono truncate max-w-[150px]" title={p.title}>
+                                ⚡ {p.title}
+                              </span>
+                              
+                              <button
+                                type="button"
+                                onClick={() => handleCopyPromptText(p.id, p.text)}
+                                className={`text-[9px] font-mono font-black px-2 py-0.5 rounded cursor-pointer transition-all border-2 border-black shadow-[1px_1px_0px_#000] active:translate-y-[0.5px] ${
+                                  isCopied 
+                                    ? 'bg-emerald-550 bg-emerald-500 text-white border-black' 
+                                    : 'bg-indigo-100 hover:bg-indigo-150 text-indigo-900'
+                                }`}
+                                title="Copy prompt text to clipboard"
+                              >
+                                {isCopied ? 'Copied! ✓' : '📋 Copy Prompt'}
+                              </button>
+                            </div>
+
+                            <p 
+                              className="text-[11px] font-mono text-slate-800 whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto block p-2 border border-slate-100 bg-slate-50/50 rounded cursor-pointer selection:bg-indigo-100/50"
+                              onClick={() => handleCopyPromptText(p.id, p.text)}
+                              title="Click anywhere on content block to copy prompt"
+                            >
+                              {p.text}
+                            </p>
+
+                            <div className="flex justify-between items-center text-[9px] text-slate-550 border-t border-slate-100 pt-1.5" id={`prompt-bottom-controls-bar-${p.id}`}>
+                              <span className="font-mono text-[8px] opacity-70">
+                                Created: {new Date(p.createdAt || '').toLocaleDateString()}
+                              </span>
+
+                              <div className="flex gap-3 items-center select-none" id={`prompt-actions-set-${p.id}`}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditPrompt(p)}
+                                  className="text-[9px] font-mono font-bold text-slate-500 hover:text-blue-600 hover:underline cursor-pointer flex items-center gap-0.5 transition-colors"
+                                >
+                                  ✏️ Edit
+                                </button>
+
+                                {isConfirmingDelete ? (
+                                  <div className="flex items-center gap-1 border border-red-200 bg-red-50 px-1 py-0.5 rounded font-mono text-[8.5px] font-bold animate-fade-in" id={`prompt-del-confirm-${p.id}`}>
+                                    <span className="text-red-700 pr-0.5">Sure?</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleDeletePrompt(p.id);
+                                        setConfirmingDeletePromptId(null);
+                                      }}
+                                      className="text-red-700 hover:text-red-950 underline hover:font-black cursor-pointer"
+                                    >
+                                      YES
+                                    </button>
+                                    <span className="text-red-350">/</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmingDeletePromptId(null)}
+                                      className="text-slate-500 hover:text-black hover:underline cursor-pointer"
+                                    >
+                                      NO
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmingDeletePromptId(p.id)}
+                                    className="text-[9px] font-mono font-bold text-slate-500 hover:text-red-650 hover:underline cursor-pointer flex items-center gap-0.5 transition-colors"
+                                  >
+                                    🗑️ Delete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8 border-2 border-dashed border-black rounded-lg bg-slate-50" id="prompts-list-empty-prompt">
+                  <Bookmark className="w-5 h-5 text-slate-400 mx-auto mb-1 animate-pulse" />
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">No Custom Prompts Saved</p>
+                  <p className="text-[10px] text-slate-405 leading-relaxed font-semibold mt-1">
+                    Begin typing above to save reusable templates and formulas on this node.
                   </p>
                 </div>
               )}

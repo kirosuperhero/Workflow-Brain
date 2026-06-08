@@ -14,6 +14,13 @@ export interface Workflow {
   isFavorite?: boolean;
 }
 
+export interface SavedPrompt {
+  id: string;
+  title: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface WorkflowNode {
   id: string;
   workflowId: string;
@@ -32,6 +39,7 @@ export interface WorkflowNode {
   reviews?: any[];
   pricingTier?: string;
   approximateUses?: string;
+  prompts?: SavedPrompt[];
   createdAt: string;
   updatedAt: string;
 }
