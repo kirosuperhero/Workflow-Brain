@@ -38,6 +38,7 @@ interface SidebarProps {
   workflows?: any[];
   onDuplicateNodeToWorkflow?: (nodeId: string, targetWorkflowId: string) => void;
   onRemoveTagGlobally?: (tag: string) => void;
+  onNodeLinkClick?: (nodeId: string) => void;
 }
 
 export default function Sidebar({
@@ -54,7 +55,8 @@ export default function Sidebar({
   onAddLink,
   workflows = [],
   onDuplicateNodeToWorkflow,
-  onRemoveTagGlobally
+  onRemoveTagGlobally,
+  onNodeLinkClick
 }: SidebarProps) {
   const selectedNode = node ? {
     ...node,
@@ -1144,6 +1146,7 @@ export default function Sidebar({
                   href={selectedNode.sourceUrl} 
                   target="_blank" 
                   rel="referrer" 
+                  onClick={() => onNodeLinkClick?.(selectedNode.id)}
                   className="px-2.5 py-1 bg-white hover:bg-slate-50 border-2 border-black rounded-lg text-slate-700 hover:text-black font-bold text-[10px] flex items-center gap-1 text-xs select-none shadow-[1px_1px_0px_#000]"
                   id="preview-external-anchor"
                 >

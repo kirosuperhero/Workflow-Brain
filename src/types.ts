@@ -42,6 +42,7 @@ export interface WorkflowNode {
   prompts?: SavedPrompt[];
   createdAt: string;
   updatedAt: string;
+  clickCount?: number;
 }
 
 export interface NodeLink {

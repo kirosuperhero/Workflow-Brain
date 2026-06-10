@@ -57,6 +57,7 @@ interface CanvasProps {
   canRedo: boolean;
   queueLinks?: ResourceLinkToNode[];
   queueResources?: QueueResource[];
+  onNodeLinkClick?: (nodeId: string) => void;
 }
 
 // Precompute smart alignment search offsets sorted by Euclidean distance
@@ -95,7 +96,8 @@ export default function Canvas({
   canUndo,
   canRedo,
   queueLinks = [],
-  queueResources = []
+  queueResources = [],
+  onNodeLinkClick
 }: CanvasProps) {
   // Navigation: Panning and Zooming
   const [pan, setPan] = useState({ x: 50, y: 50 });
@@ -1621,7 +1623,10 @@ export default function Canvas({
                         rel="referrer" 
                         className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-blue-600 transition-colors border border-transparent hover:border-slate-200"
                         title={node.sourceTitle || node.sourceUrl}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onNodeLinkClick) onNodeLinkClick(node.id);
+                        }}
                         id={`external-link-node-${node.id}`}
                       >
                         <ExternalLink className="w-3 h-3" />

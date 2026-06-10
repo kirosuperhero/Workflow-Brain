@@ -63,6 +63,14 @@ export interface CloudQueue {
 }
 
 /**
+ * Helper to recursively clean undefined values from objects before saving to Firestore,
+ * preventing 'Unsupported field value: undefined' errors.
+ */
+function cleanUndefined<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
+/**
  * Saves the entire workspace configuration to Firestore under a consolidated document path
  * to maximize performance, save network queries, and bypass quota limits while ensuring complete consistency.
  */
@@ -76,13 +84,13 @@ export async function saveWorkspaceToCloud(
   const path = `users/${userId}/state/workspace`;
   try {
     const docRef = doc(db, 'users', userId, 'state', 'workspace');
-    await setDoc(docRef, {
+    await setDoc(docRef, cleanUndefined({
       workflows,
       nodes,
       links,
       versions,
       updatedAt: new Date().toISOString()
-    });
+    }));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -124,12 +132,12 @@ export async function saveQueueToCloud(
   const path = `users/${userId}/state/queue_resources`;
   try {
     const docRef = doc(db, 'users', userId, 'state', 'queue_resources');
-    await setDoc(docRef, {
+    await setDoc(docRef, cleanUndefined({
       queueResources,
       queueReviews,
       queueLinks,
       updatedAt: new Date().toISOString()
-    });
+    }));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

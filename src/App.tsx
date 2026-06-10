@@ -16,6 +16,7 @@ import Canvas from './components/Canvas';
 import Sidebar from './components/Sidebar';
 import ImportExport from './components/ImportExport';
 import ExperimentalQueue from './components/ExperimentalQueue';
+import InsightsDashboard from './components/InsightsDashboard';
 import { 
   Brain, 
   ChevronLeft, 
@@ -128,7 +129,7 @@ export default function App() {
   const [showCloudSyncProgress, setShowCloudSyncProgress] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'workspaces' | 'queue'>('workspaces');
+  const [activeTab, setActiveTab] = useState<'workspaces' | 'queue' | 'insights'>('workspaces');
   const [queueResources, setQueueResources] = useState<QueueResource[]>([]);
   const [queueReviews, setQueueReviews] = useState<ResourceReview[]>([]);
   const [queueLinks, setQueueLinks] = useState<ResourceLinkToNode[]>([]);
@@ -705,6 +706,24 @@ export default function App() {
     saveStateToStorage(workflows, nextNodes, links, versions);
   };
 
+  const handleNodeLinkClick = (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (node) {
+      const currentClicks = node.clickCount || 0;
+      handleUpdateNodeData(nodeId, { clickCount: currentClicks + 1 });
+    }
+  };
+
+  const handleNavigateToWorkspace = (workflowId: string, nodeId?: string) => {
+    setSelectedWorkflowId(workflowId);
+    if (nodeId) {
+      setSelectedNodeId(nodeId);
+    } else {
+      setSelectedNodeId(null);
+    }
+    setActiveTab('workspaces');
+  };
+
   const handleRemoveTagGlobally = (tagToRemove: string) => {
     pushToHistory(nodes, links);
     const nextNodes = nodes.map(n => {
@@ -1032,11 +1051,11 @@ export default function App() {
             </button>
           </div>
 
-          {/* Nav Tab Swapping workspaces / queue */}
+          {/* Nav Tab Swapping workspaces / queue / insights */}
           <div className="flex border-b-2 border-black bg-slate-100 select-none shrink-0">
             <button 
               onClick={() => setActiveTab('workspaces')}
-              className={`flex-1 py-2 text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
+              className={`flex-1 py-2 text-[9px] md:text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
                 activeTab === 'workspaces' 
                   ? 'bg-white text-black border-r-2 border-black' 
                   : 'text-slate-500 hover:bg-slate-50 border-r-2 border-black border-b border-black'
@@ -1046,14 +1065,25 @@ export default function App() {
             </button>
             <button 
               onClick={() => setActiveTab('queue')}
-              className={`flex-1 py-2 text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
+              className={`flex-1 py-2 text-[9px] md:text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
                 activeTab === 'queue' 
-                  ? 'bg-white text-black' 
-                  : 'text-slate-500 hover:bg-slate-50 border-b border-black'
+                  ? 'bg-white text-black border-r-2 border-black' 
+                  : 'text-slate-500 hover:bg-slate-50 border-r-2 border-black border-b border-black'
               }`}
               id="experimental-queue-tab"
             >
-              ⚡ Inbox Queue ({queueResources.length})
+              ⚡ Queue ({queueResources.length})
+            </button>
+            <button 
+              onClick={() => setActiveTab('insights')}
+              className={`flex-1 py-2 text-[9px] md:text-[10px] font-mono font-black uppercase text-center cursor-pointer transition-all ${
+                activeTab === 'insights' 
+                  ? 'bg-white text-black' 
+                  : 'text-slate-500 hover:bg-slate-50 border-b border-black'
+              }`}
+              id="insights-leaderboard-tab"
+            >
+              📈 Insights
             </button>
           </div>
 
@@ -1679,6 +1709,12 @@ export default function App() {
             onAddReview={handleAddResourceReview}
             onMoveToWorkflow={handleMoveResourceToWorkflow}
           />
+        ) : activeTab === 'insights' ? (
+          <InsightsDashboard 
+            nodes={nodes}
+            workflows={workflows}
+            onNavigateToWorkspace={handleNavigateToWorkspace}
+          />
         ) : activeWorkflow ? (
           <>
             {/* Elegant Floating Top Title & Config Bar (Google Docs/Weje Style) */}
@@ -1790,6 +1826,7 @@ export default function App() {
                 canRedo={redoStack.length > 0}
                 queueLinks={queueLinks}
                 queueResources={queueResources}
+                onNodeLinkClick={handleNodeLinkClick}
               />
             </div>
           </>
@@ -1838,6 +1875,7 @@ export default function App() {
               workflows={workflows}
               onDuplicateNodeToWorkflow={handleDuplicateNodeToWorkflow}
               onRemoveTagGlobally={handleRemoveTagGlobally}
+              onNodeLinkClick={handleNodeLinkClick}
             />
           </div>
         </div>
