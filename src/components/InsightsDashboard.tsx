@@ -124,6 +124,36 @@ export default function InsightsDashboard({
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 15); // Show top 15 recent
 
+  // 5. Sorted click history flat list
+  const clickHistoryList: {
+    nodeId: string;
+    nodeTitle: string;
+    nodeType: string;
+    workflowId: string;
+    clickedAt: string;
+    sourceUrl?: string;
+  }[] = [];
+
+  nodes.forEach(node => {
+    if (node.clickHistory && Array.isArray(node.clickHistory)) {
+      node.clickHistory.forEach(timestamp => {
+        clickHistoryList.push({
+          nodeId: node.id,
+          nodeTitle: node.title || 'Untitled Card',
+          nodeType: node.type,
+          workflowId: node.workflowId,
+          clickedAt: timestamp,
+          sourceUrl: node.sourceUrl
+        });
+      });
+    }
+  });
+
+  // Sort click history newest first, slice top 20
+  const timelineClicks = clickHistoryList
+    .sort((a, b) => new Date(b.clickedAt).getTime() - new Date(a.clickedAt).getTime())
+    .slice(0, 20);
+
   const formatDate = (isoStr: string) => {
     try {
       const d = new Date(isoStr);
@@ -405,37 +435,38 @@ export default function InsightsDashboard({
 
         </div>
 
-        {/* Secondary Row: Timeline of Added Cards, displaying when they were created */}
-        <div className="bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_#000] overflow-hidden" id="insights-timeline-panel">
-          <div className="p-4 border-b-2 border-black bg-slate-50 flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Calendar className="w-4 h-4 text-emerald-600" />
-              <h3 className="text-xs font-black uppercase font-mono tracking-wider text-black">
-                📅 Workspace Card Creation Timeline
-              </h3>
+        {/* Secondary Row: Side-by-side timelines */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" id="insights-timeline-panel">
+          
+          {/* Card Creation Timeline */}
+          <div className="bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_#000] overflow-hidden flex flex-col">
+            <div className="p-4 border-b-2 border-black bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-xs font-black uppercase font-mono tracking-wider text-black">
+                  📅 Card Creation Timeline
+                </h3>
+              </div>
+              <div className="bg-emerald-100 text-emerald-800 text-[8px] font-mono px-2 py-0.5 rounded border border-emerald-300 font-extrabold uppercase">
+                Add Timestamps
+              </div>
             </div>
-            <div className="bg-emerald-100 text-emerald-800 text-[8px] font-mono px-2 py-0.5 rounded border border-emerald-300 font-extrabold uppercase">
-              Added Timestamps
-            </div>
-          </div>
 
-          <div className="p-5 max-h-[350px] overflow-y-auto">
-            <div className="relative border-l-2 border-slate-200 pl-4 space-y-6">
-              {timelineNodes.length === 0 ? (
-                <div className="text-center py-12 text-slate-400 text-xs font-medium border-l border-transparent">
-                  No workspace cards have been initialized yet.
-                </div>
-              ) : (
-                timelineNodes.map((node) => {
-                  const wfName = getWorkflowTitle(node.workflowId);
-                  return (
-                    <div key={node.id} className="relative group">
-                      
-                      {/* Timeline Dot Indicator */}
-                      <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-black bg-white group-hover:bg-emerald-500 transition-all z-10" />
+            <div className="p-5 max-h-[380px] overflow-y-auto flex-1">
+              <div className="relative border-l-2 border-slate-200 pl-4 space-y-5">
+                {timelineNodes.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400 text-xs font-medium border-l border-transparent">
+                    No workspace cards have been initialized yet.
+                  </div>
+                ) : (
+                  timelineNodes.map((node) => {
+                    const wfName = getWorkflowTitle(node.workflowId);
+                    return (
+                      <div key={node.id} className="relative group">
+                        {/* Timeline Dot Indicator */}
+                        <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-black bg-white group-hover:bg-emerald-500 transition-all z-10" />
 
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-                        <div>
+                        <div className="space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[9px] font-mono font-bold text-slate-400">
                               [{formatDate(node.createdAt)}]
@@ -449,41 +480,116 @@ export default function InsightsDashboard({
                             </span>
                             <h4 
                               onClick={() => onNavigateToWorkspace?.(node.workflowId, node.id)}
-                              className="text-xs font-black text-slate-800 hover:text-emerald-600 cursor-pointer transition-colors"
-                              title="Click to locate on interactive whiteboard"
+                              className="text-xs font-black text-slate-850 hover:text-emerald-600 cursor-pointer transition-colors truncate max-w-[170px] md:max-w-none"
+                              title="Click to locate on whiteboard"
                             >
                               {node.title || 'Untitled Card'}
                             </h4>
                           </div>
 
-                          <div className="mt-0.5 text-[10px] text-slate-500 line-clamp-1">
-                            {node.content ? node.content.slice(0, 150) : <span className="italic text-slate-400">Empty workspace card summary content</span>}
+                          <div className="flex items-center gap-1.5 uppercase font-mono text-[8px] font-extrabold flex-wrap">
+                            <span className="text-slate-400">In Workspace:</span>
+                            <button
+                              onClick={() => onNavigateToWorkspace?.(node.workflowId, node.id)}
+                              className="bg-slate-100 hover:bg-neutral-950 border border-slate-200 hover:border-black text-slate-600 hover:text-white px-1.5 py-0.5 rounded transition-all cursor-pointer"
+                            >
+                              📁 {wfName}
+                            </button>
+                            {node.clickCount && node.clickCount > 0 ? (
+                              <span className="bg-blue-50 border border-blue-200 text-blue-700 px-1 py-0.2 rounded">
+                                {node.clickCount} Clicks
+                              </span>
+                            ) : null}
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-1.5 self-start md:self-auto uppercase font-mono text-[8.5px] font-extrabold">
-                          <span className="text-slate-400">In Workspace:</span>
-                          <button
-                            onClick={() => onNavigateToWorkspace?.(node.workflowId, node.id)}
-                            className="bg-slate-100 hover:bg-neutral-900 border border-slate-300 hover:border-black text-slate-750 hover:text-white px-2 py-0.5 rounded font-black transition-all cursor-pointer"
-                          >
-                            📁 {wfName}
-                          </button>
-                          
-                          {node.clickCount && node.clickCount > 0 ? (
-                            <span className="bg-blue-50 border border-blue-200 text-blue-700 px-1.5 py-0.5 rounded">
-                              {node.clickCount} Clicks
-                            </span>
-                          ) : null}
-                        </div>
-
                       </div>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Link Click History Timeline */}
+          <div className="bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_#000] overflow-hidden flex flex-col">
+            <div className="p-4 border-b-2 border-black bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <History className="w-4 h-4 text-blue-600 animate-spin-slow" />
+                <h3 className="text-xs font-black uppercase font-mono tracking-wider text-black">
+                  🖱️ Link Use & Clicking Logs
+                </h3>
+              </div>
+              <div className="bg-blue-100 text-blue-800 text-[8px] font-mono px-2 py-0.5 rounded border border-blue-300 font-extrabold uppercase animate-pulse">
+                Live Click Stream
+              </div>
+            </div>
+
+            <div className="p-5 max-h-[380px] overflow-y-auto flex-1">
+              <div className="relative border-l-2 border-blue-200 pl-4 space-y-5">
+                {timelineClicks.length === 0 ? (
+                  <div className="text-center py-12 text-slate-450 text-xs font-medium border-l border-transparent space-y-3">
+                    <div className="text-slate-350 select-none">📭 No link utilization telemetry recorded yet.</div>
+                    <p className="text-[10px] text-slate-405 font-mono max-w-xs mx-auto leading-normal">
+                      Click reference/source links on any workspace card cards, and they will stream here in realtime.
+                    </p>
+                  </div>
+                ) : (
+                  timelineClicks.map((click, cIdx) => {
+                    const wfName = getWorkflowTitle(click.workflowId);
+                    return (
+                      <div key={cIdx} className="relative group">
+                        {/* Timeline Dot Indicator */}
+                        <span className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-black bg-white group-hover:bg-blue-500 transition-all z-10" />
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-mono font-bold text-slate-450 bg-blue-50 border border-blue-100 px-1 rounded">
+                              [{formatDate(click.clickedAt)}]
+                            </span>
+                            <span className={`text-[8px] uppercase font-mono px-1 border rounded font-semibold ${
+                              click.nodeType === 'tool' ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                              click.nodeType === 'link' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' :
+                              'bg-slate-50 border-slate-200 text-slate-700'
+                            }`}>
+                              {click.nodeType}
+                            </span>
+                            <h4 
+                              onClick={() => onNavigateToWorkspace?.(click.workflowId, click.nodeId)}
+                              className="text-xs font-black text-slate-800 hover:text-blue-600 cursor-pointer transition-colors truncate max-w-[170px] md:max-w-none"
+                              title="Click to locate on whiteboard"
+                            >
+                              Used "{click.nodeTitle || 'Untitled Card'}"
+                            </h4>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 uppercase font-mono text-[8px] font-extrabold flex-wrap">
+                            <span className="text-slate-400">In Workspace:</span>
+                            <button
+                              onClick={() => onNavigateToWorkspace?.(click.workflowId, click.nodeId)}
+                              className="bg-slate-100 hover:bg-neutral-950 border border-slate-200 hover:border-black text-slate-600 hover:text-white px-1.5 py-0.5 rounded transition-all cursor-pointer"
+                            >
+                              📁 {wfName}
+                            </button>
+                            {click.sourceUrl && (
+                              <a 
+                                href={click.sourceUrl} 
+                                target="_blank" 
+                                rel="referrer"
+                                className="inline-flex items-center gap-0.5 text-blue-500 hover:text-blue-700 underline hover:no-underline font-bold"
+                              >
+                                🔗 {click.sourceUrl.slice(0, 30)}...
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+
         </div>
 
       </div>

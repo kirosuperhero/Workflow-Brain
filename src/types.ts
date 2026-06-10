@@ -43,6 +43,7 @@ export interface WorkflowNode {
   createdAt: string;
   updatedAt: string;
   clickCount?: number;
+  clickHistory?: string[];
 }
 
 export interface NodeLink {

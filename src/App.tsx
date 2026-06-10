@@ -710,7 +710,11 @@ export default function App() {
     const node = nodes.find(n => n.id === nodeId);
     if (node) {
       const currentClicks = node.clickCount || 0;
-      handleUpdateNodeData(nodeId, { clickCount: currentClicks + 1 });
+      const currentHistory = node.clickHistory || [];
+      handleUpdateNodeData(nodeId, { 
+        clickCount: currentClicks + 1,
+        clickHistory: [...currentHistory, new Date().toISOString()]
+      });
     }
   };
 
