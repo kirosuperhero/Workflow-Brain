@@ -397,6 +397,28 @@ export default function Sidebar({
     handleChange('prompts', updatedPrompts);
   };
 
+  const handleMovePromptUp = (promptId: string) => {
+    const list = [...(selectedNode.prompts || [])];
+    const index = list.findIndex(p => p.id === promptId);
+    if (index > 0) {
+      const temp = list[index];
+      list[index] = list[index - 1];
+      list[index - 1] = temp;
+      handleChange('prompts', list);
+    }
+  };
+
+  const handleMovePromptDown = (promptId: string) => {
+    const list = [...(selectedNode.prompts || [])];
+    const index = list.findIndex(p => p.id === promptId);
+    if (index >= 0 && index < list.length - 1) {
+      const temp = list[index];
+      list[index] = list[index + 1];
+      list[index + 1] = temp;
+      handleChange('prompts', list);
+    }
+  };
+
   const handleCopyPromptText = (promptId: string, text: string) => {
     try {
       navigator.clipboard.writeText(text).then(() => {
@@ -594,6 +616,7 @@ export default function Sidebar({
                 >
                   <option value="trusted">Trusted Verified</option>
                   <option value="experimental">Experimental</option>
+                  <option value="check_later">Check Later (Bookmark)</option>
                   <option value="archived">Archived / Legacy</option>
                 </select>
               </div>
@@ -1209,6 +1232,7 @@ export default function Sidebar({
                   >
                     <option value="trusted">Trusted Verified</option>
                     <option value="experimental">Experimental</option>
+                    <option value="check_later">Check Later (Bookmark)</option>
                     <option value="archived">Archived / Legacy</option>
                   </select>
                 </div>
@@ -1280,10 +1304,11 @@ export default function Sidebar({
                             <select
                               value={editingReviewStatus}
                               onChange={(e) => setEditingReviewStatus(e.target.value as NodeStatus)}
-                              className="w-full bg-white border-2 border-black text-slate-900 font-bold text-xs rounded px-1.5 py-1 outline-none cursor-pointer focus:bg-slate-50"
+                              className="w-full bg-white border-2 border-black text-slate-906 font-bold text-xs rounded px-1.5 py-1 outline-none cursor-pointer focus:bg-slate-50"
                             >
                               <option value="trusted">Trusted Verified</option>
                               <option value="experimental">Experimental</option>
+                              <option value="check_later">Check Later (Bookmark)</option>
                               <option value="archived">Archived / Legacy</option>
                             </select>
                           </div>
@@ -1501,7 +1526,7 @@ export default function Sidebar({
 
               {selectedNode.prompts && selectedNode.prompts.length > 0 ? (
                 <div className="space-y-3" id="saved-prompts-list">
-                  {selectedNode.prompts.map((p) => {
+                  {selectedNode.prompts.map((p, pIdx) => {
                     const isEditing = editingPromptId === p.id;
                     const isCopied = copiedPromptId === p.id;
                     const isConfirmingDelete = confirmingDeletePromptId === p.id;
@@ -1553,16 +1578,48 @@ export default function Sidebar({
                           <>
                             {/* Display mode */}
                             <div className="flex justify-between items-center bg-slate-50 -mx-3.5 -mt-3.5 px-3.5 py-1.5 rounded-t-lg border-b-2 border-black" id={`prompt-header-${p.id}`}>
-                              <span className="text-[10.5px] font-extrabold text-slate-900 font-mono truncate max-w-[150px]" title={p.title}>
-                                ⚡ {p.title}
-                              </span>
+                              <div className="flex items-center gap-1.5 min-w-0" id={`prompt-title-arrange-${p.id}`}>
+                                <div className="flex flex-col select-none shrink-0" id={`prompt-reorder-buttons-${p.id}`}>
+                                  <button
+                                    type="button"
+                                    disabled={pIdx === 0}
+                                    onClick={() => handleMovePromptUp(p.id)}
+                                    className={`px-1 py-0 px-0.5 text-[8px] leading-3 transition-colors font-bold ${
+                                      pIdx === 0 
+                                        ? 'text-slate-300 cursor-not-allowed' 
+                                        : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-200/50 rounded-sm cursor-pointer'
+                                    }`}
+                                    title="Move prompt up"
+                                    id={`prompt-move-up-${p.id}`}
+                                  >
+                                    ▲
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={pIdx === (selectedNode.prompts?.length || 0) - 1}
+                                    onClick={() => handleMovePromptDown(p.id)}
+                                    className={`px-1 py-0 px-0.5 text-[8px] leading-3 transition-colors font-bold ${
+                                      pIdx === (selectedNode.prompts?.length || 0) - 1 
+                                        ? 'text-slate-300 cursor-not-allowed' 
+                                        : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-200/50 rounded-sm cursor-pointer'
+                                    }`}
+                                    title="Move prompt down"
+                                    id={`prompt-move-down-${p.id}`}
+                                  >
+                                    ▼
+                                  </button>
+                                </div>
+                                <span className="text-[10.5px] font-extrabold text-slate-900 font-mono truncate max-w-[95px] sm:max-w-[110px]" title={p.title}>
+                                  ⚡ {p.title}
+                                </span>
+                              </div>
                               
                               <button
                                 type="button"
                                 onClick={() => handleCopyPromptText(p.id, p.text)}
                                 className={`text-[9px] font-mono font-black px-2 py-0.5 rounded cursor-pointer transition-all border-2 border-black shadow-[1px_1px_0px_#000] active:translate-y-[0.5px] ${
                                   isCopied 
-                                    ? 'bg-emerald-550 bg-emerald-500 text-white border-black' 
+                                    ? 'bg-emerald-500 text-white border-black' 
                                     : 'bg-indigo-100 hover:bg-indigo-150 text-indigo-900'
                                 }`}
                                 title="Copy prompt text to clipboard"

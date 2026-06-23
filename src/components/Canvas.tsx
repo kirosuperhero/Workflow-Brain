@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Archive,
+  Bookmark,
   Star,
   Type,
   Paperclip,
@@ -49,6 +50,7 @@ interface CanvasProps {
   onDeleteNode: (nodeId: string) => void;
   onAddLink: (fromId: string, toId: string) => void;
   onDeleteLink: (linkId: string) => void;
+  onUpdateLink?: (linkId: string, updatedFields: Partial<NodeLink>) => void;
   onUpdateNode: (nodeId: string, updatedFields: Partial<WorkflowNode>) => void;
   searchQuery: string;
   onUndo: () => void;
@@ -89,6 +91,7 @@ export default function Canvas({
   onDeleteNode,
   onAddLink,
   onDeleteLink,
+  onUpdateLink,
   onUpdateNode,
   searchQuery,
   onUndo,
@@ -143,6 +146,11 @@ export default function Canvas({
 
   // Node Linking State
   const [linkingSourceId, setLinkingSourceId] = useState<string | null>(null);
+
+  // Connection Link Editing State
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+  const [tempLinkLabel, setTempLinkLabel] = useState('');
+  const [tempLinkBidirectional, setTempLinkBidirectional] = useState(false);
 
   // Filter local state
   const [filterType, setFilterType] = useState<string>('all');
@@ -877,6 +885,13 @@ export default function Canvas({
             archived
           </span>
         );
+      case 'check_later':
+        return (
+          <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-[#92400E] bg-[#FEF3C7] border border-[#F59E0B] px-1.5 py-0.5 rounded" id={`badge-check-later`}>
+            <Bookmark className="w-2.5 h-2.5 text-[#D97706]" />
+            check later
+          </span>
+        );
     }
   };
 
@@ -1297,42 +1312,83 @@ export default function Canvas({
                     strokeDasharray={fromNode.status === 'experimental' ? '5 4' : undefined}
                     className="transition-colors duration-200"
                     markerEnd={`url(#${markerId})`}
+                    markerStart={link.isBidirectional ? `url(#${markerId})` : undefined}
                   />
 
-                  {/* Detach Link Badge Button in the middle */}
+                  {/* Flowing Animation Particles */}
+                  {/* Forward Request Flow Particle */}
+                  <circle r="3" fill={strokeColor} opacity="0.85">
+                    <animateMotion dur="3.5s" repeatCount="indefinite" path={dAttribute} />
+                  </circle>
+
+                  {/* Reverse Return Flow Particle (only for bidirectional) */}
+                  {link.isBidirectional && (
+                    <circle r="3" fill="#f59e0b" opacity="0.9">
+                      <animateMotion 
+                        dur="3.5s" 
+                        repeatCount="indefinite" 
+                        path={dAttribute} 
+                        keyPoints="1;0" 
+                        keyTimes="0;1" 
+                        calcMode="linear" 
+                      />
+                    </circle>
+                  )}
+
+                  {/* Detach / Settings Link Badge Button in the middle */}
                   <g 
                     transform={`translate(${midX}, ${midY})`}
                     className="cursor-pointer group pointer-events-auto animate-fade-in"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteLink(link.id);
+                      setEditingLinkId(link.id);
+                      setTempLinkLabel(link.label || '');
+                      setTempLinkBidirectional(!!link.isBidirectional);
                     }}
                   >
-                    <title>Remove Node link connection</title>
+                    <title>Connection settings (Click to edit label or toggle Bidirectional Round-Trip mode)</title>
                     <rect 
-                      x="-14" 
-                      y="-10" 
-                      width="28" 
-                      height="20" 
-                      rx="4" 
-                      fill="#ffffff" 
-                      stroke="#000000" 
+                      x={link.label ? -32 : -16} 
+                      y="-11" 
+                      width={link.label ? 64 : 32} 
+                      height="22" 
+                      rx="11" 
+                      fill={link.isBidirectional ? "#fef3c7" : "#ffffff"} 
+                      stroke={link.isBidirectional ? "#d97706" : "#475569"} 
                       strokeWidth="1.5"
-                      className="group-hover:fill-red-50 group-hover:stroke-red-500 transition-colors shadow-[1px_1px_0px_#000]"
+                      className="group-hover:fill-amber-50 group-hover:stroke-amber-600 transition-all shadow-[2px_2px_0px_rgba(0,0,0,0.15)]"
                     />
-                    {link.label ? (
+                    {link.isBidirectional ? (
                       <text 
-                        className="text-[9px] font-mono font-bold select-none" 
-                        fill="#000000" 
+                        className="text-[10px] select-none text-amber-600" 
                         textAnchor="middle" 
                         dominantBaseline="middle"
-                        y="-15"
+                        y="1"
+                      >
+                        🔄
+                      </text>
+                    ) : (
+                      <path 
+                        d="M -5 0 L 5 0 M 1 -3 L 5 0 L 1 3" 
+                        fill="none" 
+                        stroke="#475569" 
+                        strokeWidth="1.5" 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        className="group-hover:stroke-black"
+                      />
+                    )}
+                    {link.label ? (
+                      <text 
+                        className="text-[8px] font-mono font-black select-none bg-white p-1" 
+                        fill="#1e293b" 
+                        textAnchor="middle" 
+                        dominantBaseline="middle"
+                        y="-17"
                       >
                         {link.label}
                       </text>
                     ) : null}
-                    <line x1="-3" y1="-3" x2="3" y2="3" stroke="#000000" strokeWidth="1.5" className="group-hover:stroke-red-500" />
-                    <line x1="3" y1="-3" x2="-3" y2="3" stroke="#000000" strokeWidth="1.5" className="group-hover:stroke-red-500" />
                   </g>
                 </g>
               );
@@ -1366,6 +1422,143 @@ export default function Canvas({
               />
             ))}
           </svg>
+
+          {/* Connection Link Edit Popover */}
+          {editingLinkId && (() => {
+            const editingLink = links.find(l => l.id === editingLinkId);
+            if (!editingLink) return null;
+            
+            const fromNode = filteredNodes.find(n => n.id === editingLink.fromNodeId);
+            const toNode = filteredNodes.find(n => n.id === editingLink.toNodeId);
+            if (!fromNode || !toNode) return null;
+
+            const ports = {
+              from: getNodePorts(fromNode),
+              to: getNodePorts(toNode)
+            };
+
+            const startX = ports.from.right.x;
+            const startY = ports.from.right.y;
+            const endX = ports.to.left.x;
+            const endY = ports.to.left.y;
+            const midX = (startX + endX) / 2;
+            const midY = (startY + endY) / 2;
+
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${midX}px`,
+                  top: `${midY}px`,
+                  transform: 'translate(-50%, -100%) translateY(-15px)',
+                  zIndex: 9999,
+                }}
+                className="bg-white border-2 border-black rounded-lg p-3 w-64 shadow-[4px_4px_0px_#000] pointer-events-auto select-text animate-fade-in text-xs font-sans"
+                onClick={(e) => e.stopPropagation()}
+                id="link-details-popover-card"
+              >
+                <div className="flex items-center justify-between border-b pb-1.5 mb-2 font-mono text-[9px] uppercase tracking-wider font-extrabold text-slate-800">
+                  <span>🔗 Link Properties</span>
+                  <button 
+                    type="button" 
+                    onClick={() => setEditingLinkId(null)}
+                    className="text-slate-400 hover:text-black font-extrabold cursor-pointer text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Source -> destination description */}
+                  <div className="text-[10px] text-slate-500 font-mono bg-slate-50 p-1.5 rounded border border-slate-150">
+                    From: <span className="font-bold text-slate-800">{fromNode.title}</span><br />
+                    To: <span className="font-bold text-slate-800">{toNode.title}</span>
+                  </div>
+
+                  {/* Label Input */}
+                  <div>
+                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
+                      Connection Label
+                    </label>
+                    <input
+                      type="text"
+                      value={tempLinkLabel}
+                      onChange={(e) => setTempLinkLabel(e.target.value)}
+                      placeholder="e.g. Request payload, triggers, returns etc."
+                      className="w-full bg-slate-50 focus:bg-white border-2 border-slate-200 focus:border-black rounded px-2 py-1 outline-none text-[11px] font-medium"
+                    />
+                  </div>
+
+                  {/* Bidirectional Option Toggle */}
+                  <div>
+                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
+                      Flow Direction & Type
+                    </label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
+                        <input
+                          type="radio"
+                          name="directionality"
+                          checked={!tempLinkBidirectional}
+                          onChange={() => setTempLinkBidirectional(false)}
+                          className="mt-0.5 accent-amber-600 cursor-pointer"
+                        />
+                        <div className="leading-tight">
+                          <span className="font-extrabold text-slate-800 text-[10.5px]">➡️ One-Way Flow</span>
+                          <p className="text-[9px] text-slate-500 font-medium">Continuous forward pipeline progression</p>
+                        </div>
+                      </label>
+
+                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
+                        <input
+                          type="radio"
+                          name="directionality"
+                          checked={tempLinkBidirectional}
+                          onChange={() => setTempLinkBidirectional(true)}
+                          className="mt-0.5 accent-amber-600 cursor-pointer"
+                        />
+                        <div className="leading-tight">
+                          <span className="font-extrabold text-amber-800 text-[10.5px]">🔄 Round-Trip / Bidirectional</span>
+                          <p className="text-[9px] text-slate-500 font-medium">Sends request forward and returns a response/result backward</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Save and Delete Actions */}
+                  <div className="flex items-center justify-between pt-2 border-t font-mono text-[9px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDeleteLink(editingLink.id);
+                        setEditingLinkId(null);
+                      }}
+                      className="flex items-center gap-1 hover:text-red-600 font-bold text-red-500 cursor-pointer"
+                      title="Delete this link connection completely"
+                    >
+                      🗑️ Detach
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onUpdateLink) {
+                          onUpdateLink(editingLink.id, {
+                            label: tempLinkLabel.trim(),
+                            isBidirectional: tempLinkBidirectional
+                          });
+                        }
+                        setEditingLinkId(null);
+                      }}
+                      className="bg-black text-white px-2.5 py-1 rounded border border-black hover:bg-slate-800 font-bold cursor-pointer"
+                    >
+                      Apply Changes
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Dynamic Nodes Workspace Layer */}
@@ -1400,6 +1593,8 @@ export default function Canvas({
                     ? 'border-black hover:border-emerald-600 shadow-[4px_4px_0px_#10b981]'
                     : node.status === 'experimental'
                     ? 'border-black hover:border-purple-600 shadow-[4px_4px_0px_#a855f7]'
+                    : node.status === 'check_later'
+                    ? 'border-black hover:border-[#D97706] shadow-[4px_4px_0px_#F59E0B]'
                     : 'border-slate-400 opacity-85 shadow-[3px_3px_0px_#000]'
                 }`}
                 id={`card-node-${node.id}`}

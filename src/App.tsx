@@ -800,6 +800,13 @@ export default function App() {
     saveStateToStorage(workflows, nodes, nextLinks, versions);
   };
 
+  const handleUpdateLink = (linkId: string, updatedFields: Partial<NodeLink>) => {
+    pushToHistory(nodes, links);
+    const nextLinks = links.map(l => l.id === linkId ? { ...l, ...updatedFields } : l);
+    setLinks(nextLinks);
+    saveStateToStorage(workflows, nodes, nextLinks, versions);
+  };
+
   // snap/restore
   const handleSaveVersion = (wfId: string, versionName: string) => {
     const wfNodes = nodes.filter(n => n.workflowId === wfId);
@@ -1822,6 +1829,7 @@ export default function App() {
                 onDeleteNode={handleDeleteNode}
                 onAddLink={handleAddLink}
                 onDeleteLink={handleDeleteLink}
+                onUpdateLink={handleUpdateLink}
                 onUpdateNode={handleUpdateNodeData}
                 searchQuery={sidebarSearch}
                 onUndo={handleUndo}

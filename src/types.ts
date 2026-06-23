@@ -1,5 +1,5 @@
 export type NodeType = 'step' | 'note' | 'link' | 'image' | 'video' | 'tool';
-export type NodeStatus = 'trusted' | 'experimental' | 'archived';
+export type NodeStatus = 'trusted' | 'experimental' | 'archived' | 'check_later';
 
 export interface Workflow {
   id: string;
@@ -52,6 +52,7 @@ export interface NodeLink {
   fromNodeId: string;
   toNodeId: string;
   label?: string;
+  isBidirectional?: boolean;
 }
 
 export interface WorkflowVersion {
@@ -78,7 +79,7 @@ export interface NodeReview {
 }
 
 export type ResourceType = 'article' | 'video' | 'tool' | 'note' | 'link';
-export type ResourceStatus = 'inbox' | 'experimental' | 'tested' | 'trusted' | 'archived' | 'deleted';
+export type ResourceStatus = 'inbox' | 'experimental' | 'tested' | 'trusted' | 'archived' | 'deleted' | 'check_later';
 
 export interface QueueResource {
   id: string;
@@ -92,6 +93,7 @@ export interface QueueResource {
   status: ResourceStatus;
   createdAt: string;
   updatedAt: string;
+  additionalLinks?: { id: string; title: string; url: string; addedAt?: string; isRead?: boolean }[];
 }
 
 export interface ResourceReview {

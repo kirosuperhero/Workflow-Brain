@@ -33,7 +33,9 @@ import {
   Check,
   RotateCcw,
   Upload,
-  Bookmark
+  Bookmark,
+  Copy,
+  Folder
 } from 'lucide-react';
 
 interface ExperimentalQueueProps {
@@ -369,6 +371,7 @@ export default function ExperimentalQueue({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<ResourceStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<ResourceType | 'all'>('all');
+  const [subviewTab, setSubviewTab] = useState<'study_queue' | 'check_later'>('study_queue');
 
   // Active review drawer/modal state
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
@@ -380,6 +383,16 @@ export default function ExperimentalQueue({
   
   // Custom tag creation inline
   const [newTagInput, setNewTagInput] = useState('');
+
+  // Multi-bookmark subgroup state variables
+  const [newLinkTitle, setNewLinkTitle] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+  const [addingLinkToResourceId, setAddingLinkToResourceId] = useState<string | null>(null);
+  const [popupBlockedFolderId, setPopupBlockedFolderId] = useState<string | null>(null);
+  const [copiedFolderId, setCopiedFolderId] = useState<string | null>(null);
+  const [editingSubLinkId, setEditingSubLinkId] = useState<string | null>(null);
+  const [editingSubLinkTitle, setEditingSubLinkTitle] = useState('');
+  const [editingSubLinkUrl, setEditingSubLinkUrl] = useState('');
 
   // Daily Review Scheduler State
   // We want to highlight one unreviewed item as the "Daily Focus"
@@ -455,7 +468,7 @@ export default function ExperimentalQueue({
       tags: [detectedType],
       rating: 0,
       notes: isUrl ? `URL: ${url}` : quickInput,
-      status: 'inbox'
+      status: subviewTab === 'check_later' ? 'check_later' : 'inbox'
     });
 
     setQuickInput('');
@@ -514,13 +527,22 @@ export default function ExperimentalQueue({
       case 'trusted': return 'bg-emerald-50 text-emerald-800 border-emerald-300';
       case 'archived': return 'bg-slate-100 text-slate-600 border-slate-300';
       case 'deleted': return 'bg-rose-50 text-rose-800 border-rose-300';
+      case 'check_later': return 'bg-[#FEF3C7] text-[#92400E] border-[#F59E0B]';
       default: return 'bg-slate-50 text-slate-700 border-slate-300';
     }
   };
 
   // Filtered resources inventory
   const filteredResources = resources.filter(res => {
-    if (statusFilter !== 'all' && res.status !== statusFilter) return false;
+    // Separate active study list from check later bookmarks
+    if (subviewTab === 'check_later') {
+      if (res.status !== 'check_later') return false;
+    } else {
+      // Study queue active tab
+      if (res.status === 'check_later') return false;
+      if (statusFilter !== 'all' && res.status !== statusFilter) return false;
+    }
+
     if (typeFilter !== 'all' && res.type !== typeFilter) return false;
     if (searchQuery.trim() !== '') {
       const q = searchQuery.toLowerCase();
@@ -528,7 +550,13 @@ export default function ExperimentalQueue({
       const summaryMatch = res.shortSummary?.toLowerCase().includes(q);
       const urlMatch = res.url?.toLowerCase().includes(q);
       const tagsMatch = res.tags?.some(t => t.toLowerCase().includes(q));
-      return titleMatch || summaryMatch || urlMatch || tagsMatch;
+      
+      // search inside additional bookmark links inside folders
+      const subLinksMatch = res.additionalLinks?.some(
+        sub => sub.title.toLowerCase().includes(q) || sub.url.toLowerCase().includes(q)
+      );
+
+      return titleMatch || summaryMatch || urlMatch || tagsMatch || subLinksMatch;
     }
     return true;
   });
@@ -788,17 +816,28 @@ export default function ExperimentalQueue({
         <div className="border border-slate-200 bg-slate-50/50 p-2.5 rounded-lg select-none" id="queue-filter-panel">
           <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-wider mb-2">Filter by Status:</span>
           <div className="flex flex-wrap gap-1 mb-3">
-            {(['all', 'inbox', 'experimental', 'tested', 'trusted', 'archived'] as const).map((status) => (
+            {(['all', 'inbox', 'experimental', 'tested', 'trusted', 'check_later', 'archived'] as const).map((status) => (
               <button
                 key={status}
-                onClick={() => setStatusFilter(status)}
-                className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer ${
+                onClick={() => {
+                  setStatusFilter(status);
+                  if (status === 'check_later') {
+                    setSubviewTab('check_later');
+                  } else {
+                    setSubviewTab('study_queue');
+                  }
+                }}
+                className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded border transition-colors cursor-pointer uppercase ${
+                  status === 'check_later' ? 'border-[#F59E0B]/50' : ''
+                } ${
                   statusFilter === status
                     ? 'bg-black text-white border-black font-black shadow-[1px_1px_0px_#000]'
-                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
+                    : status === 'check_later'
+                      ? 'bg-[#FEF3C7] hover:bg-[#FDE68A] text-[#92400E] border-[#F59E0B]'
+                      : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300'
                 }`}
               >
-                {status.toUpperCase()}
+                {status === 'check_later' ? '📚 CHECK LATER' : status.toUpperCase()}
               </button>
             ))}
           </div>
@@ -940,13 +979,45 @@ export default function ExperimentalQueue({
         {/* Main Resource cards catalog */}
         <div className="flex-1 flex flex-col h-full bg-[#f8fafc] overflow-hidden p-4" id="main-inventory-catalogue">
           
+          {/* Segmented Subview Tabs at the top */}
+          <div className="flex bg-slate-200/70 p-1.5 rounded-lg border border-slate-300 gap-1.5 mb-3 self-start select-none" id="queue-subview-segmented-tabs">
+            <button
+              type="button"
+              onClick={() => {
+                setSubviewTab('study_queue');
+                setStatusFilter('all');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-bold rounded-md transition-all cursor-pointer ${
+                subviewTab === 'study_queue'
+                  ? 'bg-black text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100/50 hover:text-black'
+              }`}
+            >
+              <span>⚡ Active Study Queue</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSubviewTab('check_later');
+                setStatusFilter('check_later');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs font-bold rounded-md transition-all cursor-pointer ${
+                subviewTab === 'check_later'
+                  ? 'bg-amber-100 text-amber-950 border border-amber-400 shadow-sm'
+                  : 'text-[#92400E]/70 hover:bg-amber-50 hover:text-[#92400E]'
+              }`}
+            >
+              <span>📁 Bookmarks Box (Check Later)</span>
+            </button>
+          </div>
+
           {/* Catalog Operations Bar */}
           <div className="flex flex-col md:flex-row items-center gap-3 justify-between pb-3 select-none">
             <div className="relative w-full md:w-72">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
               <input 
                 type="text"
-                placeholder="Search captured resources..."
+                placeholder={subviewTab === 'check_later' ? "Search folders, custom titles & URLs..." : "Search captured resources..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-white border-2 border-black rounded-lg pl-8 pr-3 py-1 text-xs font-semibold text-slate-800 outline-none focus:bg-white"
@@ -954,118 +1025,596 @@ export default function ExperimentalQueue({
               />
             </div>
 
-            <div className="text-[10px] font-mono text-slate-500 font-bold" id="queue-count-readout">
-              Showing {filteredResources.length} of {resources.length} resource elements
+            <div className="flex items-center gap-3">
+              {subviewTab === 'check_later' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onAddResource({
+                      title: "New Research Topic Folder",
+                      url: "",
+                      type: "link",
+                      status: "check_later",
+                      shortSummary: "A folder group for research links that should be reviewed later.",
+                      tags: ["research"],
+                      rating: 0,
+                      notes: "Bookmarks Folder Group created inside Bookmarks studio.",
+                      additionalLinks: []
+                    });
+                  }}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-mono font-bold border border-black rounded px-2.5 py-1 text-[10px] shadow-[1.5px_1.5px_0px_rgba(0,0,0,1)] active:translate-y-[1px] cursor-pointer"
+                >
+                  + Create Bookmark Folder
+                </button>
+              )}
+              <div className="text-[10px] font-mono text-slate-500 font-bold animate-fade-in" id="queue-count-readout">
+                {subviewTab === 'check_later' 
+                  ? `Showing ${filteredResources.length} folders / topic groups` 
+                  : `Showing ${filteredResources.length} of ${resources.filter(r => r.status !== 'check_later').length} active study resources`
+                }
+              </div>
             </div>
           </div>
 
           {/* Cards scrolling area */}
           <div className="flex-1 overflow-y-auto space-y-3 pr-1" id="scrolling-inventory-grid">
             {filteredResources.length > 0 ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" id="resources-grid-layer">
-                {filteredResources.map((res) => {
-                  const dateStr = new Date(res.createdAt).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
-                    year: '2-digit'
-                  });
+              subviewTab === 'check_later' ? (
+                // 📚 BOOKMARKS BOX SPECIAL FOLDER LAYOUT
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4" id="bookmarks-folders-grid">
+                  {filteredResources.map((res) => {
+                    const totalLinks = res.additionalLinks?.length || 0;
+                    const readLinks = res.additionalLinks?.filter(l => l.isRead).length || 0;
+                    const percentComplete = totalLinks > 0 ? Math.round((readLinks / totalLinks) * 100) : 0;
+                    const dateStr = new Date(res.createdAt).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      year: '2-digit'
+                    });
 
-                  // Check if this resource has reviews linked
-                  const reviewCount = reviews.filter(rev => rev.resourceId === res.id).length;
-                  const isLinked = linksToNodes.some(l => l.resourceId === res.id);
-
-                  return (
-                    <div 
-                      key={res.id}
-                      onClick={() => setSelectedResourceId(res.id)}
-                      className={`p-3 bg-white rounded-lg border-2 flex flex-col justify-between gap-3 group cursor-pointer transition-all ${
-                        selectedResourceId === res.id 
-                          ? 'border-blue-600 shadow-[3px_3px_0px_#2563eb]' 
-                          : 'border-slate-350 hover:border-slate-800 shadow-[2px_2px_0px_transparent] hover:shadow-[3px_3px_0px_rgba(0,0,0,1)]'
-                      }`}
-                    >
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            {getIconForType(res.type)}
-                            <span className="font-extrabold text-black hover:text-blue-600 line-clamp-1">{res.title}</span>
-                          </div>
-                          
-                          <span className={`px-1.5 py-0.5 border text-[8px] font-mono font-bold rounded uppercase shrink-0 ${getBgForStatus(res.status)}`}>
-                            {res.status}
-                          </span>
+                    return (
+                      <div
+                        key={res.id}
+                        onClick={() => setSelectedResourceId(res.id)}
+                        className={`relative p-4 border-2 border-black rounded-r-lg rounded-bl-lg bg-amber-50/50 flex flex-col justify-between gap-4 transition-all hover:bg-amber-50/85 shadow-[4px_4px_0px_#000] focus-within:ring-2 focus-within:ring-amber-500/10 ${
+                          selectedResourceId === res.id 
+                            ? 'border-amber-600 shadow-[4px_4px_0px_#b45309]' 
+                            : 'hover:shadow-[5px_5px_0px_#f59e0b]'
+                        }`}
+                        style={{ marginTop: '14px' }}
+                      >
+                        {/* Filing folder tab styling at the top left */}
+                        <div className="absolute -top-[23px] left-[-2px] px-3 py-1 bg-amber-100 hover:bg-amber-200 border-t-2 border-x-2 border-black rounded-t-lg text-[9px] font-mono font-black text-[#92400E] select-none flex items-center gap-1.5 transition-colors">
+                          <Folder className="w-3" />
+                          <span>📚 RESEARCH FOLDER</span>
                         </div>
 
-                        {res.url && (
-                          <div className="flex items-center gap-1 font-mono text-[9px] text-blue-500 truncate" id={`url-col-${res.id}`}>
-                            <Link2 className="w-3 h-3 text-blue-400 shrink-0" />
-                            <span className="truncate select-all">{res.url}</span>
+                        <div className="space-y-3 mt-1">
+                          {/* Folder Header */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={res.title}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => onUpdateResource(res.id, { title: e.target.value })}
+                                className="font-extrabold text-xs text-black bg-transparent border-b border-transparent hover:border-black/30 focus:border-black focus:bg-white outline-none px-0.5 rounded w-full"
+                                title="Edit Folder Title"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Add folder description or reference goals..."
+                                value={res.shortSummary || ''}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => onUpdateResource(res.id, { shortSummary: e.target.value })}
+                                className="text-[10px] text-slate-500 font-medium block bg-transparent placeholder-slate-400 border-b border-transparent hover:border-black/20 focus:border-black focus:bg-white outline-none w-full mt-1 rounded"
+                                title="Edit Folder Description"
+                              />
+                            </div>
+                            
+                            {/* Progress counter */}
+                            {totalLinks > 0 && (
+                              <div className="flex flex-col items-end gap-1 bg-amber-100/60 border border-amber-300 p-1 px-1.5 rounded-md shrink-0 select-none">
+                                <span className="text-[8px] font-mono font-black text-amber-900">{readLinks}/{totalLinks} READ ({percentComplete}%)</span>
+                                <div className="w-16 bg-slate-300 rounded-full h-1 overflow-hidden">
+                                  <div className="bg-emerald-605 h-1 bg-emerald-650 h-full rounded-full transition-all" style={{ width: `${percentComplete}%`, backgroundColor: '#10b981' }}></div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quick Add Link To Folder Form */}
+                          <div 
+                            className="bg-white border-2 border-black p-2 rounded-lg space-y-1.5 shadow-sm"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span className="block text-[8px] font-mono font-black text-amber-800 uppercase tracking-tight">Quick Add Link inside:</span>
+                            <input
+                              type="text"
+                              placeholder="Bookmark Title (e.g. NextJS Optimization Docs)"
+                              value={addingLinkToResourceId === res.id ? newLinkTitle : ''}
+                              onChange={(e) => {
+                                setAddingLinkToResourceId(res.id);
+                                setNewLinkTitle(e.target.value);
+                              }}
+                              className="w-full bg-slate-50 hover:bg-white border border-slate-305 focus:border-black rounded px-2 py-0.5 text-[10px] outline-none font-semibold text-slate-850"
+                            />
+                            <div className="flex gap-1">
+                              <input
+                                type="text"
+                                placeholder="https://..."
+                                value={addingLinkToResourceId === res.id ? newLinkUrl : ''}
+                                onChange={(e) => {
+                                  setAddingLinkToResourceId(res.id);
+                                  setNewLinkUrl(e.target.value);
+                                }}
+                                className="flex-1 bg-slate-50 hover:bg-white border border-slate-305 focus:border-black rounded px-2 py-0.5 text-[9.5px] outline-none font-mono"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!newLinkUrl.trim()) return;
+                                  const linkTitle = newLinkTitle.trim() || 'Bookmarked Reference';
+                                  const linkUrl = newLinkUrl.trim().startsWith('http') ? newLinkUrl.trim() : `https://${newLinkUrl.trim()}`;
+                                  const existingLinks = res.additionalLinks || [];
+                                  onUpdateResource(res.id, {
+                                    additionalLinks: [
+                                      ...existingLinks,
+                                      { 
+                                        id: Date.now().toString(36) + Math.random().toString(36).substring(2, 5), 
+                                        title: linkTitle, 
+                                        url: linkUrl,
+                                        addedAt: new Date().toISOString(),
+                                        isRead: false 
+                                      }
+                                    ]
+                                  });
+                                  setNewLinkTitle('');
+                                  setNewLinkUrl('');
+                                  setAddingLinkToResourceId(null);
+                                }}
+                                className="bg-black text-white px-2.5 py-0.5 rounded text-[10px] font-mono font-black border border-black hover:bg-slate-800 transition-all cursor-pointer"
+                              >
+                                Add
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Nested Checklist links */}
+                          <div className="space-y-1" onClick={(e) => e.stopPropagation()}>
+                            {res.additionalLinks && res.additionalLinks.length > 0 ? (
+                              <div className="space-y-1 max-h-40 overflow-y-auto pr-0.5" id={`folders-links-scroll-${res.id}`}>
+                                {res.additionalLinks.map((subLink) => {
+                                  const isEditing = editingSubLinkId === subLink.id;
+                                  
+                                  if (isEditing) {
+                                    return (
+                                      <div 
+                                        key={subLink.id} 
+                                        className="flex flex-col gap-1.5 p-2 bg-amber-50 border border-amber-400 rounded text-xs select-text shadow-inner"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div className="flex gap-1 items-center justify-between">
+                                          <span className="text-[8px] font-mono font-black text-amber-850 uppercase tracking-tight">Edit Reference Link:</span>
+                                          <div className="flex gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const updatedLinks = res.additionalLinks?.map(l => 
+                                                  l.id === subLink.id 
+                                                    ? { 
+                                                        ...l, 
+                                                        title: editingSubLinkTitle.trim() || 'Bookmarked Reference', 
+                                                        url: editingSubLinkUrl.trim().startsWith('http') ? editingSubLinkUrl.trim() : `https://${editingSubLinkUrl.trim()}`
+                                                      } 
+                                                    : l
+                                                );
+                                                onUpdateResource(res.id, { additionalLinks: updatedLinks });
+                                                setEditingSubLinkId(null);
+                                              }}
+                                              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-mono font-bold text-[9px] border border-black cursor-pointer shadow-sm"
+                                              title="Save changes"
+                                            >
+                                              Save
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingSubLinkId(null)}
+                                              className="px-2 py-0.5 bg-white hover:bg-slate-100 text-slate-700 rounded font-mono font-bold text-[9px] border border-slate-300 cursor-pointer"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <input
+                                            type="text"
+                                            value={editingSubLinkTitle}
+                                            onChange={(e) => setEditingSubLinkTitle(e.target.value)}
+                                            placeholder="Title (e.g. NextJS Docs)"
+                                            className="w-full bg-white border border-slate-350 focus:border-black rounded px-1.5 py-0.5 text-[10px] outline-none font-semibold text-slate-850"
+                                            autoFocus
+                                          />
+                                          <input
+                                            type="text"
+                                            value={editingSubLinkUrl}
+                                            onChange={(e) => setEditingSubLinkUrl(e.target.value)}
+                                            placeholder="https://..."
+                                            className="w-full bg-white border border-slate-350 focus:border-black rounded px-1.5 py-0.5 text-[9.5px] outline-none font-mono"
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+
+                                  return (
+                                    <div 
+                                      key={subLink.id} 
+                                      className={`flex items-center justify-between gap-2 p-1.5 px-2 bg-white border rounded text-xs group/sub hover:border-black transition-all ${
+                                        subLink.isRead 
+                                          ? 'bg-slate-50/75 border-slate-200 opacity-60 line-through text-slate-400' 
+                                          : 'border-slate-250 shadow-sm'
+                                      }`}
+                                      onDoubleClick={() => {
+                                        setEditingSubLinkId(subLink.id);
+                                        setEditingSubLinkTitle(subLink.title);
+                                        setEditingSubLinkUrl(subLink.url);
+                                      }}
+                                      title="Double-click to edit name or URL"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!subLink.isRead}
+                                          onChange={() => {
+                                            const updatedLinks = res.additionalLinks?.map(l => 
+                                              l.id === subLink.id ? { ...l, isRead: !l.isRead } : l
+                                            );
+                                            onUpdateResource(res.id, { additionalLinks: updatedLinks });
+                                          }}
+                                          className="h-3.5 w-3.5 accent-amber-600 rounded bg-slate-50 cursor-pointer"
+                                          title={subLink.isRead ? "Mark as unread" : "Mark as read"}
+                                        />
+
+                                        <Link2 className={`w-3 h-3 shrink-0 ${subLink.isRead ? 'text-slate-300' : 'text-blue-500'}`} />
+                                        <a
+                                          href={subLink.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className={`font-bold hover:text-blue-600 truncate underline text-[10.5px] ${
+                                            subLink.isRead ? 'text-slate-400 font-medium' : 'text-slate-800'
+                                          }`}
+                                          title={subLink.url}
+                                        >
+                                          {subLink.title}
+                                        </a>
+                                      </div>
+
+                                      <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover/sub:opacity-100 transition-opacity">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingSubLinkId(subLink.id);
+                                            setEditingSubLinkTitle(subLink.title);
+                                            setEditingSubLinkUrl(subLink.url);
+                                          }}
+                                          className="px-1.5 py-0.2 text-[8px] bg-slate-50 hover:bg-slate-100 border border-slate-250 rounded font-bold cursor-pointer hover:border-black"
+                                          title="Edit Name & URL"
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(subLink.url);
+                                          }}
+                                          className="px-1.5 py-0.2 text-[8px] bg-slate-50 hover:bg-slate-100 border border-slate-250 rounded font-bold cursor-pointer"
+                                          title="Copy URL"
+                                        >
+                                          Copy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const filtered = res.additionalLinks?.filter(l => l.id !== subLink.id);
+                                            onUpdateResource(res.id, { additionalLinks: filtered });
+                                          }}
+                                          className="text-red-500 hover:bg-red-50 p-0.5 rounded cursor-pointer leading-none font-mono text-sm shrink-0"
+                                          title="Delete reference"
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="text-center py-3 text-[9px] text-[#92400E]/70 font-mono italic select-none bg-amber-50/10 border border-dashed border-amber-300/30 rounded-lg">
+                                Folder is empty. Use adding input above!
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Interactive popup blocker helpful warning banner */}
+                        {popupBlockedFolderId === res.id && (
+                          <div 
+                            className="bg-amber-100 border border-amber-400 p-2.5 rounded-lg text-[10px] text-[#78350F] leading-relaxed space-y-1.5 animate-fade-in"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between font-black text-amber-900 text-[10px] uppercase tracking-wide">
+                              <span>⚠️ Browser blocked tabs from opening</span>
+                              <button
+                                type="button"
+                                onClick={() => setPopupBlockedFolderId(null)}
+                                className="text-[#92400E] hover:text-black font-extrabold"
+                              >
+                                [ Dismiss ]
+                              </button>
+                            </div>
+                            <p>
+                              Modern browsers protect you by blocking multiple popups triggered from one click. 
+                              To open all <strong>{totalLinks}</strong> links, allow popups for this site in your address bar (look for the "popups blocked" indicator at the top right of your browser, or padlock menu).
+                            </p>
                           </div>
                         )}
 
-                        <p className="text-[10px] text-slate-500 font-medium leading-relaxed line-clamp-2">
-                          {res.shortSummary || 'No summary entered yet. Tap to configure item reviews.'}
-                        </p>
-
-                        <div className="flex flex-wrap gap-1" id={`tags-container-${res.id}`}>
-                          {res.tags?.map((tag) => (
-                            <span 
-                              key={tag}
-                              className="px-1.5 py-0.2 bg-slate-100 border border-slate-205 rounded text-[8px] font-mono text-slate-650"
+                        {/* Folder controls */}
+                        <div className="flex items-center justify-between border-t border-slate-200/50 pt-2 pb-0.5 text-[9px] font-mono text-[#92400E] select-none gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUpdateResource(res.id, {
+                                  status: 'inbox',
+                                  updatedAt: new Date().toISOString()
+                                });
+                                setSubviewTab('study_queue');
+                                setStatusFilter('all');
+                              }}
+                              className="flex items-center gap-1 border border-[#D97706]/30 bg-white hover:bg-black hover:text-white rounded px-2 py-0.5 text-[9px] font-black text-black shadow-sm transition-all cursor-pointer"
+                              title="Promote bookmarks group to daily review inbox queue"
                             >
-                              #{tag}
-                            </span>
-                          ))}
+                              <span>⚡ Promote to study Queue</span>
+                            </button>
+
+                            {totalLinks > 0 && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    let blockedDetected = false;
+                                    res.additionalLinks?.forEach((link) => {
+                                      if (link.url) {
+                                        try {
+                                          const win = window.open(link.url, '_blank', 'noopener,noreferrer');
+                                          // If browser blocked it, window.open returns null/undefined
+                                          if (!win || win.closed || typeof win.closed === 'undefined') {
+                                            blockedDetected = true;
+                                          }
+                                        } catch (err) {
+                                          blockedDetected = true;
+                                        }
+                                      }
+                                    });
+                                    if (blockedDetected) {
+                                      setPopupBlockedFolderId(res.id);
+                                    } else {
+                                      setPopupBlockedFolderId(null);
+                                    }
+                                  }}
+                                  className="flex items-center gap-1 border border-amber-500 bg-[#FFFBEB] hover:bg-amber-100 text-[#92400E] hover:text-black rounded px-2 py-0.5 text-[9px] font-black shadow-sm transition-all cursor-pointer"
+                                  title="Open all bookmarked links"
+                                >
+                                  🌍 Open All ({totalLinks})
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const text = res.additionalLinks?.map(l => l.url).filter(Boolean).join('\n') || '';
+                                    if (text) {
+                                      navigator.clipboard.writeText(text);
+                                      setCopiedFolderId(res.id);
+                                      setTimeout(() => setCopiedFolderId(null), 1500);
+                                    }
+                                  }}
+                                  className="border border-amber-500 bg-white hover:bg-amber-50 text-[#92400E] hover:text-black rounded px-2 py-0.5 text-[9px] font-black shadow-sm transition-all cursor-pointer min-w-[55px] text-center"
+                                  title="Copy all bookmark links to clipboard"
+                                >
+                                  {copiedFolderId === res.id ? '✓ Copied!' : '📋 Copy All'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <span className="text-[7.5px] text-slate-400 font-mono">Created {dateStr}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteResource(res.id);
+                                if (selectedResourceId === res.id) setSelectedResourceId(null);
+                              }}
+                              className="p-1 text-red-500 hover:bg-rose-50 rounded cursor-pointer transition-colors"
+                              title="Delete bookmark folder group"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
+
                       </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                // ⚡ ACTIVE LEARNING CARD GRID 
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" id="resources-grid-layer">
+                  {filteredResources.map((res) => {
+                    const dateStr = new Date(res.createdAt).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      year: '2-digit'
+                    });
 
-                      {/* Footer actions for the inventory cards */}
-                      <div className="flex items-center justify-between border-t border-slate-100 pt-2 pb-0.5 text-[9px] font-mono text-slate-400 select-none">
-                        <div className="flex items-center gap-2">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-3 h-3" />
-                            {dateStr}
-                          </span>
+                    // Check if this resource has reviews linked
+                    const reviewCount = reviews.filter(rev => rev.resourceId === res.id).length;
+                    const isLinked = linksToNodes.some(l => l.resourceId === res.id);
 
-                          {reviewCount > 0 && (
-                            <span className="flex items-center gap-0.5 text-emerald-600 font-bold">
-                              <ThumbsUp className="w-3 h-3" />
-                              Reviewed
+                    return (
+                      <div 
+                        key={res.id}
+                        onClick={() => setSelectedResourceId(res.id)}
+                        className={`p-3 bg-white rounded-lg border-2 flex flex-col justify-between gap-3 group cursor-pointer transition-all ${
+                          selectedResourceId === res.id 
+                            ? 'border-blue-600 shadow-[3px_3px_0px_#2563eb]' 
+                            : 'border-slate-350 hover:border-slate-800 shadow-[2px_2px_0px_transparent] hover:shadow-[3px_3px_0px_rgba(0,0,0,1)]'
+                        }`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              {getIconForType(res.type)}
+                              <span className="font-extrabold text-black hover:text-blue-600 line-clamp-1">{res.title}</span>
+                            </div>
+                            
+                            <span className={`px-1.5 py-0.5 border text-[8px] font-mono font-bold rounded uppercase shrink-0 ${getBgForStatus(res.status)}`}>
+                              {res.status}
                             </span>
+                          </div>
+
+                          {res.url && (
+                            <div className="flex items-center gap-1 font-mono text-[9px] text-blue-500 truncate" id={`url-col-${res.id}`}>
+                              <Link2 className="w-3 h-3 text-blue-400 shrink-0" />
+                              <span className="truncate select-all">{res.url}</span>
+                            </div>
                           )}
 
-                          {isLinked && (
-                            <span className="px-1 bg-purple-50 text-purple-700 border border-purple-200 rounded font-bold text-[8px]">
-                              LINKED TO WORKFLOW
-                            </span>
+                          <p className="text-[10px] text-slate-500 font-medium leading-relaxed line-clamp-2">
+                            {res.shortSummary || 'No summary entered yet. Tap to configure item reviews.'}
+                          </p>
+
+                          <div className="flex flex-wrap gap-1" id={`tags-container-${res.id}`}>
+                            {res.tags?.map((tag) => (
+                              <span 
+                                key={tag}
+                                className="px-1.5 py-0.2 bg-slate-100 border border-slate-205 rounded text-[8px] font-mono text-slate-650"
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* Nested loop bookmarks if folder is active */}
+                          {res.additionalLinks && res.additionalLinks.length > 0 && (
+                            <div className="bg-slate-50 border border-dashed border-slate-300 p-2 rounded-md space-y-1 mt-1 text-[10px]">
+                              <span className="block font-mono text-[8px] text-slate-400 uppercase font-black">📂 Folder Bookmark Links</span>
+                              {res.additionalLinks.map(subLink => (
+                                <div key={subLink.id} className="flex items-center justify-between gap-1">
+                                  <a href={subLink.url} target="_blank" rel="noreferrer" className="text-blue-600 truncate hover:underline font-semibold">{subLink.title}</a>
+                                  {subLink.isRead && <span className="text-emerald-700 font-extrabold text-[8px] uppercase">READ</span>}
+                                </div>
+                              ))}
+                            </div>
                           )}
+
                         </div>
 
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteResource(res.id);
-                              if (selectedResourceId === res.id) setSelectedResourceId(null);
-                            }}
-                            className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer hover:border hover:border-red-200"
-                            title="Delete Resource permanently"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          
-                          <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                        {/* Footer actions */}
+                        <div className="flex items-center justify-between border-t border-slate-100 pt-2 pb-0.5 text-[9px] font-mono text-slate-400 select-none">
+                          <div className="flex items-center gap-2">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              {dateStr}
+                            </span>
+
+                            {reviewCount > 0 && (
+                              <span className="flex items-center gap-0.5 text-emerald-600 font-bold">
+                                <ThumbsUp className="w-3 h-3" />
+                                Reviewed
+                              </span>
+                            )}
+
+                            {isLinked && (
+                              <span className="px-1 bg-purple-50 text-purple-700 border border-purple-200 rounded font-bold text-[8px]">
+                                LINKED TO WORKFLOW
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {/* Downgrade/Move to Bookmark choice button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onUpdateResource(res.id, {
+                                  status: 'check_later',
+                                  updatedAt: new Date().toISOString()
+                                });
+                                setSubviewTab('check_later');
+                                setStatusFilter('check_later');
+                              }}
+                              className="px-1.5 py-0.5 border border-slate-300 hover:border-amber-400 bg-white hover:bg-amber-50 text-[8px] rounded text-[#92400E] font-bold cursor-pointer"
+                              title="Move resource to Check Later Bookmarks Box"
+                            >
+                              📚 Save later
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteResource(res.id);
+                                if (selectedResourceId === res.id) setSelectedResourceId(null);
+                              }}
+                              className="p-1 hover:bg-red-50 text-red-500 rounded cursor-pointer hover:border hover:border-red-200"
+                              title="Delete Resource permanently"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            
+                            <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                          </div>
                         </div>
+
                       </div>
-
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )
             ) : (
-              <div className="text-center py-16 text-slate-400 font-mono text-[10px] uppercase border-2 border-dashed border-slate-300 rounded-lg bg-slate-50 p-6">
-                No matching experimental resources found.
+              <div className="text-center py-16 text-slate-400 font-mono text-[10px] uppercase border-2 border-dashed border-slate-300 rounded-lg bg-slate-50 p-6 flex flex-col items-center justify-center gap-3">
+                <span>
+                  {subviewTab === 'check_later' ? "Empty Bookmarks Box. Create a bookmark group folder to begin!" : "No pending active queue resources found."}
+                </span>
+                {subviewTab === 'check_later' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddResource({
+                        title: "New Research Topic Folder",
+                        url: "",
+                        type: "link",
+                        status: "check_later",
+                        shortSummary: "A folder group for research links that should be reviewed later.",
+                        tags: ["research"],
+                        rating: 0,
+                        notes: "Bookmarks Folder Group created inside Bookmarks studio.",
+                        additionalLinks: []
+                      });
+                    }}
+                    className="bg-[#FEF3C7] hover:bg-amber-100 border border-amber-400 px-3 py-1.5 text-neutral-800 font-mono font-black rounded-lg shadow-sm cursor-pointer"
+                  >
+                    + Create Topic Folder
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1138,6 +1687,7 @@ export default function ExperimentalQueue({
                       <option value="experimental">EXPERIMENTAL</option>
                       <option value="tested">TESTED</option>
                       <option value="trusted">TRUSTED</option>
+                      <option value="check_later">CHECK LATER 📚</option>
                       <option value="archived">ARCHIVED</option>
                     </select>
                   </div>
@@ -1178,6 +1728,99 @@ export default function ExperimentalQueue({
                     className="w-full bg-slate-50 border-2 border-black text-slate-900 font-medium text-xs rounded-lg px-3 py-2 outline-none focus:bg-white resize-none"
                     placeholder="Keep reference links, commands, installation guides here..."
                   />
+                </div>
+
+                {/* Profile Drawer: Nested Sub-Links Bookmarks system */}
+                <div className="bg-amber-50/30 border-2 border-[#F59E0B]/50 p-3 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between text-[10px] font-mono font-black text-[#92400E] uppercase">
+                    <span className="flex items-center gap-1">📂 Folder/Group Links ({selectedResource.additionalLinks?.length || 0})</span>
+                  </div>
+                  
+                  <div className="bg-white border-2 border-slate-900 p-2 rounded-md space-y-1.5 shadow-sm">
+                    <span className="block text-[8px] font-mono font-black text-slate-400 uppercase tracking-tight">Add Link to this Folder</span>
+                    <input
+                      type="text"
+                      placeholder="Title (e.g., Guide)"
+                      value={newLinkTitle}
+                      onChange={(e) => setNewLinkTitle(e.target.value)}
+                      className="w-full bg-slate-50 hover:bg-white border border-slate-300 focus:border-black rounded px-2 py-1 text-[10px] outline-none font-semibold text-slate-800"
+                    />
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        placeholder="https://..."
+                        value={newLinkUrl}
+                        onChange={(e) => setNewLinkUrl(e.target.value)}
+                        className="flex-1 bg-slate-50 hover:bg-white border border-slate-300 focus:border-black rounded px-2 py-1 text-[9px] outline-none font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newLinkUrl.trim()) return;
+                          const title = newLinkTitle.trim() || 'Link Reference';
+                          const url = newLinkUrl.trim().startsWith('http') ? newLinkUrl.trim() : `https://${newLinkUrl.trim()}`;
+                          const existingLinks = selectedResource.additionalLinks || [];
+                          onUpdateResource(selectedResource.id, {
+                            additionalLinks: [
+                              ...existingLinks,
+                              { id: Date.now().toString(36) + Math.random().toString(36).substring(2, 5), title, url }
+                            ]
+                          });
+                          setNewLinkTitle('');
+                          setNewLinkUrl('');
+                        }}
+                        className="bg-black text-white hover:bg-slate-800 px-2.5 py-1 text-[10px] font-mono font-black border border-black rounded cursor-pointer"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  {selectedResource.additionalLinks && selectedResource.additionalLinks.length > 0 ? (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {selectedResource.additionalLinks.map((subLink) => (
+                        <div key={subLink.id} className="flex items-center justify-between gap-1.5 p-1 bg-white border border-slate-200 rounded text-[9.5px] group/sub">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="text-slate-400 shrink-0 select-none">🔗</span>
+                            <a
+                              href={subLink.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-bold text-slate-800 hover:text-blue-600 truncate underline"
+                              title={subLink.url}
+                            >
+                              {subLink.title}
+                            </a>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(subLink.url);
+                              }}
+                              className="px-1 py-0.2 text-[8px] bg-slate-50 hover:bg-slate-100 border border-slate-205 rounded font-bold cursor-pointer"
+                            >
+                              Copy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const filtered = selectedResource.additionalLinks?.filter(l => l.id !== subLink.id);
+                                onUpdateResource(selectedResource.id, { additionalLinks: filtered });
+                              }}
+                              className="text-red-500 hover:text-red-700 font-bold px-1 text-[11px] cursor-pointer font-mono shrink-0"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-2 text-[9px] text-[#92400E]/70 font-mono italic">
+                      No bookmarks saved in this folder group yet.
+                    </div>
+                  )}
                 </div>
 
                 {/* Tags custom tag adder interface */}
