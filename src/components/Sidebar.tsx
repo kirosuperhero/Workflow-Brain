@@ -92,6 +92,8 @@ export default function Sidebar({
 
   // Multi-tags input local state helper
   const [newTagInput, setNewTagInput] = useState('');
+  const [showTagDropdown, setShowTagDropdown] = useState(false);
+  const [tagSuggestActiveIndex, setTagSuggestActiveIndex] = useState(0);
 
   // Inline tag editing states
   const [editingTagIndex, setEditingTagIndex] = useState<number | null>(null);
@@ -281,6 +283,69 @@ export default function Sidebar({
     const currentNodeTags = selectedNode?.tags || [];
     return allWorkspaceUniqueTags.filter(t => !currentNodeTags.includes(t));
   })();
+
+  // Filter tag suggestions based on current typing input
+  const filteredTagSuggestions = (() => {
+    const separators = /[,;/]+/;
+    const tokens = newTagInput.split(separators);
+    const lastToken = tokens[tokens.length - 1] || '';
+    const cleanLast = lastToken.trim().toLowerCase();
+    
+    if (!cleanLast) return [];
+    
+    const currentNodeTags = selectedNode?.tags || [];
+    return allWorkspaceUniqueTags.filter(tag => 
+      tag.includes(cleanLast) && !currentNodeTags.includes(tag)
+    );
+  })();
+
+  const handleSelectTagSuggestion = (tag: string) => {
+    const separators = /[,;/]+/;
+    const tokens = newTagInput.split(separators);
+    
+    if (tokens.length > 0) {
+      tokens[tokens.length - 1] = tag;
+    } else {
+      tokens.push(tag);
+    }
+    
+    // Join back with a clean separator and space for next entry
+    const newVal = tokens.join(', ') + ', ';
+    setNewTagInput(newVal);
+    setShowTagDropdown(false);
+    
+    // Force focus back to tag-creation-input
+    setTimeout(() => {
+      const inputEl = document.getElementById('tag-creation-input');
+      if (inputEl) {
+        inputEl.focus();
+      }
+    }, 50);
+  };
+
+  const handleTagInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showTagDropdown || filteredTagSuggestions.length === 0) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setTagSuggestActiveIndex(prev => 
+        prev < filteredTagSuggestions.length - 1 ? prev + 1 : 0
+      );
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setTagSuggestActiveIndex(prev => 
+        prev > 0 ? prev - 1 : filteredTagSuggestions.length - 1
+      );
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const selected = filteredTagSuggestions[tagSuggestActiveIndex];
+      if (selected) {
+        handleSelectTagSuggestion(selected);
+      }
+    } else if (e.key === 'Escape') {
+      setShowTagDropdown(false);
+    }
+  };
 
   // Preset Common domain tag suggestions
   const suggestionTags = ['npm', 'docker', 'stripe', 'api-endpoint', 'nextjs', 'spanner', 'auth', 'database', 'gemini'];
@@ -812,15 +877,63 @@ export default function Sidebar({
               )}
 
               {/* Add tag Input trigger & helper */}
-              <form onSubmit={handleAddTag} className="flex gap-1.5" id="add-tag-form-element">
-                <input 
-                  type="text"
-                  value={newTagInput}
-                  onChange={(e) => setNewTagInput(e.target.value)}
-                  placeholder="e.g. key, database, vercel"
-                  className="flex-1 bg-white border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-2.5 py-1.5 focus:bg-white outline-none placeholder-slate-400 font-sans"
-                  id="tag-creation-input"
-                />
+              <form onSubmit={handleAddTag} className="flex gap-1.5 relative" id="add-tag-form-element">
+                <div className="relative flex-1">
+                  <input 
+                    type="text"
+                    value={newTagInput}
+                    onChange={(e) => {
+                      setNewTagInput(e.target.value);
+                      setShowTagDropdown(true);
+                      setTagSuggestActiveIndex(0);
+                    }}
+                    onFocus={() => {
+                      setShowTagDropdown(true);
+                      setTagSuggestActiveIndex(0);
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowTagDropdown(false), 180);
+                    }}
+                    onKeyDown={handleTagInputKeyDown}
+                    placeholder="e.g. key, database, vercel"
+                    className="w-full bg-white border-2 border-black text-slate-905 font-bold text-xs rounded-lg px-2.5 py-1.5 focus:bg-white outline-none placeholder-slate-400 font-sans"
+                    id="tag-creation-input"
+                    autoComplete="off"
+                  />
+                  
+                  {/* Floating Suggestion Dropdown */}
+                  {showTagDropdown && filteredTagSuggestions.length > 0 && (
+                    <div 
+                      className="absolute left-0 right-0 mt-1.5 bg-white border-2 border-black rounded-lg shadow-[3px_3px_0px_#000] z-50 max-h-40 overflow-y-auto divide-y divide-slate-100 animate-slide-down"
+                      id="tag-autocomplete-dropdown-container"
+                    >
+                      {filteredTagSuggestions.map((tag, sIdx) => (
+                        <div
+                          key={tag}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectTagSuggestion(tag);
+                          }}
+                          onMouseEnter={() => setTagSuggestActiveIndex(sIdx)}
+                          className={`px-2.5 py-1.5 text-[11px] font-mono font-bold cursor-pointer transition-colors flex items-center justify-between ${
+                            sIdx === tagSuggestActiveIndex
+                              ? 'bg-amber-100 text-black border-l-4 border-amber-500 pl-1.5'
+                              : 'text-slate-800 hover:bg-slate-50'
+                          }`}
+                          id={`tag-autocomplete-item-${sIdx}`}
+                        >
+                          <span className="flex items-center gap-1 text-slate-900">
+                            <span className="text-[10px]">🏷️</span>
+                            <span>{tag}</span>
+                          </span>
+                          <span className="text-[7px] font-sans font-black bg-slate-200/60 px-1 py-0.5 rounded border border-slate-300">
+                            {sIdx === tagSuggestActiveIndex ? 'ENTER ⏎' : 'CLICK'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="submit"
                   className="bg-blue-600 hover:bg-blue-700 text-white font-mono font-bold text-[10px] px-3 py-1.5 border-2 border-black rounded-lg transition-all cursor-pointer shadow-[1.5px_1.5px_0px_#000] active:translate-y-[1px] active:shadow-[1px_1px_0px_#000]"

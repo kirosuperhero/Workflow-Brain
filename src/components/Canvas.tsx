@@ -151,6 +151,7 @@ export default function Canvas({
   const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
   const [tempLinkLabel, setTempLinkLabel] = useState('');
   const [tempLinkBidirectional, setTempLinkBidirectional] = useState(false);
+  const [confirmingDeleteNodeId, setConfirmingDeleteNodeId] = useState<string | null>(null);
 
   // Filter local state
   const [filterType, setFilterType] = useState<string>('all');
@@ -1422,143 +1423,6 @@ export default function Canvas({
               />
             ))}
           </svg>
-
-          {/* Connection Link Edit Popover */}
-          {editingLinkId && (() => {
-            const editingLink = links.find(l => l.id === editingLinkId);
-            if (!editingLink) return null;
-            
-            const fromNode = filteredNodes.find(n => n.id === editingLink.fromNodeId);
-            const toNode = filteredNodes.find(n => n.id === editingLink.toNodeId);
-            if (!fromNode || !toNode) return null;
-
-            const ports = {
-              from: getNodePorts(fromNode),
-              to: getNodePorts(toNode)
-            };
-
-            const startX = ports.from.right.x;
-            const startY = ports.from.right.y;
-            const endX = ports.to.left.x;
-            const endY = ports.to.left.y;
-            const midX = (startX + endX) / 2;
-            const midY = (startY + endY) / 2;
-
-            return (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: `${midX}px`,
-                  top: `${midY}px`,
-                  transform: 'translate(-50%, -100%) translateY(-15px)',
-                  zIndex: 9999,
-                }}
-                className="bg-white border-2 border-black rounded-lg p-3 w-64 shadow-[4px_4px_0px_#000] pointer-events-auto select-text animate-fade-in text-xs font-sans"
-                onClick={(e) => e.stopPropagation()}
-                id="link-details-popover-card"
-              >
-                <div className="flex items-center justify-between border-b pb-1.5 mb-2 font-mono text-[9px] uppercase tracking-wider font-extrabold text-slate-800">
-                  <span>🔗 Link Properties</span>
-                  <button 
-                    type="button" 
-                    onClick={() => setEditingLinkId(null)}
-                    className="text-slate-400 hover:text-black font-extrabold cursor-pointer text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-
-                <div className="space-y-3">
-                  {/* Source -> destination description */}
-                  <div className="text-[10px] text-slate-500 font-mono bg-slate-50 p-1.5 rounded border border-slate-150">
-                    From: <span className="font-bold text-slate-800">{fromNode.title}</span><br />
-                    To: <span className="font-bold text-slate-800">{toNode.title}</span>
-                  </div>
-
-                  {/* Label Input */}
-                  <div>
-                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
-                      Connection Label
-                    </label>
-                    <input
-                      type="text"
-                      value={tempLinkLabel}
-                      onChange={(e) => setTempLinkLabel(e.target.value)}
-                      placeholder="e.g. Request payload, triggers, returns etc."
-                      className="w-full bg-slate-50 focus:bg-white border-2 border-slate-200 focus:border-black rounded px-2 py-1 outline-none text-[11px] font-medium"
-                    />
-                  </div>
-
-                  {/* Bidirectional Option Toggle */}
-                  <div>
-                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
-                      Flow Direction & Type
-                    </label>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
-                        <input
-                          type="radio"
-                          name="directionality"
-                          checked={!tempLinkBidirectional}
-                          onChange={() => setTempLinkBidirectional(false)}
-                          className="mt-0.5 accent-amber-600 cursor-pointer"
-                        />
-                        <div className="leading-tight">
-                          <span className="font-extrabold text-slate-800 text-[10.5px]">➡️ One-Way Flow</span>
-                          <p className="text-[9px] text-slate-500 font-medium">Continuous forward pipeline progression</p>
-                        </div>
-                      </label>
-
-                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
-                        <input
-                          type="radio"
-                          name="directionality"
-                          checked={tempLinkBidirectional}
-                          onChange={() => setTempLinkBidirectional(true)}
-                          className="mt-0.5 accent-amber-600 cursor-pointer"
-                        />
-                        <div className="leading-tight">
-                          <span className="font-extrabold text-amber-800 text-[10.5px]">🔄 Round-Trip / Bidirectional</span>
-                          <p className="text-[9px] text-slate-500 font-medium">Sends request forward and returns a response/result backward</p>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Save and Delete Actions */}
-                  <div className="flex items-center justify-between pt-2 border-t font-mono text-[9px]">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onDeleteLink(editingLink.id);
-                        setEditingLinkId(null);
-                      }}
-                      className="flex items-center gap-1 hover:text-red-600 font-bold text-red-500 cursor-pointer"
-                      title="Delete this link connection completely"
-                    >
-                      🗑️ Detach
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (onUpdateLink) {
-                          onUpdateLink(editingLink.id, {
-                            label: tempLinkLabel.trim(),
-                            isBidirectional: tempLinkBidirectional
-                          });
-                        }
-                        setEditingLinkId(null);
-                      }}
-                      className="bg-black text-white px-2.5 py-1 rounded border border-black hover:bg-slate-800 font-bold cursor-pointer"
-                    >
-                      Apply Changes
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
         </div>
 
         {/* Dynamic Nodes Workspace Layer */}
@@ -1611,18 +1475,47 @@ export default function Canvas({
                   </div>
                   <div className="flex items-center gap-1.5 select-none" onClick={(e) => e.stopPropagation()}>
                     {getStatusBadge(node.status)}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteNode(node.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-650 rounded cursor-pointer transition-colors"
-                      title="Delete Node"
-                      id={`delete-btn-${node.id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {confirmingDeleteNodeId === node.id ? (
+                      <div className="flex items-center gap-1 bg-red-100 border border-red-300 px-1 py-0.5 rounded animate-fade-in text-[9px] font-bold font-mono text-red-700 shadow-sm" id={`delete-confirm-box-${node.id}`}>
+                        <span className="mr-0.5 select-none">Sure?</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteNode(node.id);
+                            setConfirmingDeleteNodeId(null);
+                          }}
+                          className="px-1 bg-red-500 text-white rounded hover:bg-red-600 transition-colors cursor-pointer"
+                          title="Confirm node deletion"
+                          id={`delete-confirm-yes-${node.id}`}
+                        >
+                          ✓
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmingDeleteNodeId(null);
+                          }}
+                          className="px-1 bg-slate-200 text-slate-800 rounded hover:bg-slate-300 transition-colors cursor-pointer"
+                          title="Cancel"
+                          id={`delete-confirm-no-${node.id}`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmingDeleteNodeId(node.id);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-650 rounded cursor-pointer transition-colors"
+                        title="Delete Node"
+                        id={`delete-btn-${node.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1863,6 +1756,143 @@ export default function Canvas({
               </div>
             );
           })}
+
+          {/* Connection Link Edit Popover */}
+          {editingLinkId && (() => {
+            const editingLink = links.find(l => l.id === editingLinkId);
+            if (!editingLink) return null;
+            
+            const fromNode = filteredNodes.find(n => n.id === editingLink.fromNodeId);
+            const toNode = filteredNodes.find(n => n.id === editingLink.toNodeId);
+            if (!fromNode || !toNode) return null;
+
+            const ports = {
+              from: getNodePorts(fromNode),
+              to: getNodePorts(toNode)
+            };
+
+            const startX = ports.from.right.x;
+            const startY = ports.from.right.y;
+            const endX = ports.to.left.x;
+            const endY = ports.to.left.y;
+            const midX = (startX + endX) / 2;
+            const midY = (startY + endY) / 2;
+
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${midX}px`,
+                  top: `${midY}px`,
+                  transform: 'translate(-50%, -100%) translateY(-15px)',
+                  zIndex: 9999,
+                }}
+                className="bg-white border-2 border-black rounded-lg p-3 w-64 shadow-[4px_4px_0px_#000] pointer-events-auto select-text animate-fade-in text-xs font-sans"
+                onClick={(e) => e.stopPropagation()}
+                id="link-details-popover-card"
+              >
+                <div className="flex items-center justify-between border-b pb-1.5 mb-2 font-mono text-[9px] uppercase tracking-wider font-extrabold text-slate-800">
+                  <span>🔗 Link Properties</span>
+                  <button 
+                    type="button" 
+                    onClick={() => setEditingLinkId(null)}
+                    className="text-slate-400 hover:text-black font-extrabold cursor-pointer text-xs"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {/* Source -> destination description */}
+                  <div className="text-[10px] text-slate-500 font-mono bg-slate-50 p-1.5 rounded border border-slate-150">
+                    From: <span className="font-bold text-slate-800">{fromNode.title}</span><br />
+                    To: <span className="font-bold text-slate-800">{toNode.title}</span>
+                  </div>
+
+                  {/* Label Input */}
+                  <div>
+                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
+                      Connection Label
+                    </label>
+                    <input
+                      type="text"
+                      value={tempLinkLabel}
+                      onChange={(e) => setTempLinkLabel(e.target.value)}
+                      placeholder="e.g. Request payload, triggers, returns etc."
+                      className="w-full bg-slate-50 focus:bg-white border-2 border-slate-200 focus:border-black rounded px-2 py-1 outline-none text-[11px] font-medium"
+                    />
+                  </div>
+
+                  {/* Bidirectional Option Toggle */}
+                  <div>
+                    <label className="block text-[9px] font-sans font-bold uppercase tracking-wide text-slate-700 mb-1">
+                      Flow Direction & Type
+                    </label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
+                        <input
+                          type="radio"
+                          name="directionality"
+                          checked={!tempLinkBidirectional}
+                          onChange={() => setTempLinkBidirectional(false)}
+                          className="mt-0.5 accent-amber-600 cursor-pointer"
+                        />
+                        <div className="leading-tight">
+                          <span className="font-extrabold text-slate-800 text-[10.5px]">➡️ One-Way Flow</span>
+                          <p className="text-[9px] text-slate-500 font-medium">Continuous forward pipeline progression</p>
+                        </div>
+                      </label>
+
+                      <label className="flex items-start gap-2 p-1.5 rounded border-2 border-slate-200 hover:border-black cursor-pointer bg-slate-50 hover:bg-amber-50/20">
+                        <input
+                          type="radio"
+                          name="directionality"
+                          checked={tempLinkBidirectional}
+                          onChange={() => setTempLinkBidirectional(true)}
+                          className="mt-0.5 accent-amber-600 cursor-pointer"
+                        />
+                        <div className="leading-tight">
+                          <span className="font-extrabold text-amber-800 text-[10.5px]">🔄 Round-Trip / Bidirectional</span>
+                          <p className="text-[9px] text-slate-500 font-medium">Sends request forward and returns a response/result backward</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Save and Delete Actions */}
+                  <div className="flex items-center justify-between pt-2 border-t font-mono text-[9px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDeleteLink(editingLink.id);
+                        setEditingLinkId(null);
+                      }}
+                      className="flex items-center gap-1 hover:text-red-600 font-bold text-red-500 cursor-pointer"
+                      title="Delete this link connection completely"
+                    >
+                      🗑️ Detach
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onUpdateLink) {
+                          onUpdateLink(editingLink.id, {
+                            label: tempLinkLabel.trim(),
+                            isBidirectional: tempLinkBidirectional
+                          });
+                        }
+                        setEditingLinkId(null);
+                      }}
+                      className="bg-black text-white px-2.5 py-1 rounded border border-black hover:bg-slate-800 font-bold cursor-pointer"
+                    >
+                      Apply Changes
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Full-screen Image Preview Lightbox Overlay */}

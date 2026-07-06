@@ -188,6 +188,14 @@ export default function App() {
   const [showSnapshotsModal, setShowSnapshotsModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [showDonateBanner, setShowDonateBanner] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem('workflow_brain_onboarding_completed');
+    } catch {
+      return true;
+    }
+  });
+  const [showHelpModal, setShowHelpModal] = useState(false);
   
   // Dynamic Canvas options
   const [showCanvasSidebar, setShowCanvasSidebar] = useState(true);
@@ -1785,6 +1793,17 @@ export default function App() {
                   <span>Saves</span>
                 </button>
 
+                {/* Onboarding Guide / Help Modal Trigger */}
+                <button
+                  onClick={() => setShowHelpModal(true)}
+                  className="p-1 px-2.5 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded text-amber-850 hover:text-black flex items-center gap-1 cursor-pointer transition-colors text-[9px] font-mono font-bold"
+                  title="Open Onboarding Help Guide"
+                  id="help-guide-trigger"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-amber-650" />
+                  <span>Help</span>
+                </button>
+
                 <span className="text-slate-300 text-[10px] select-none shrink-0 border-l border-slate-200 h-4 pl-2 hidden md:inline">|</span>
 
                 {/* Right collapsible stats */}
@@ -2033,6 +2052,234 @@ export default function App() {
                 className="py-1.5 px-4 bg-black text-white hover:bg-slate-900 text-xs font-mono font-black border-2 border-black rounded-lg cursor-pointer shadow-[2px_2px_0px_#000]"
               >
                 Done
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 5. USER ONBOARDING OVERLAY */}
+      {showOnboarding && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-55 flex items-center justify-center p-4 animate-fade-in" id="onboarding-overlay-container">
+          <div className="bg-white border-3 border-black rounded-xl w-full max-w-2xl p-6 relative shadow-[8px_8px_0px_#000] animate-scale-up max-h-[95vh] overflow-y-auto">
+            
+            <button 
+              onClick={() => {
+                try {
+                  localStorage.setItem('workflow_brain_onboarding_completed', 'true');
+                } catch (e) {}
+                setShowOnboarding(false);
+              }}
+              className="absolute top-4 right-4 p-1 rounded-lg border-2 border-black hover:bg-slate-100 cursor-pointer shadow-[1px_1px_0px_#000] text-black"
+              id="dismiss-onboarding-btn"
+              title="Skip onboarding"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="inline-flex w-12 h-12 bg-blue-600 border-2 border-black rounded-xl items-center justify-center text-white shadow-[2px_2px_0px_#000] mb-3">
+                <Brain className="w-6 h-6 text-white" />
+              </div>
+              <h2 className="text-sm font-mono font-black text-black uppercase tracking-widest">
+                Welcome to Workflow Brain!
+              </h2>
+              <p className="text-[11px] font-sans text-slate-500 font-bold uppercase mt-1">
+                Your interactive visual workspace & development scaffolding planner
+              </p>
+            </div>
+
+            <div className="space-y-4 font-sans text-xs">
+              <p className="text-slate-600 leading-relaxed text-center max-w-lg mx-auto font-medium">
+                Workflow Brain is built to help you plan, map, and document your software architecture. Follow this quick guide to master your new visual environment:
+              </p>
+
+              {/* Steps Bento Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                
+                {/* Step 1: Double Click */}
+                <div className="bg-amber-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🖱️</span>
+                    <h4 className="font-extrabold text-black text-xs uppercase tracking-wide">
+                      Double-Click to Add
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Double-click anywhere on the empty infinite grid canvas to instantly drop a fresh, fully customizable Action Card. You can drag cards around, edit their specifications, or delete them in the inspector panel.
+                  </p>
+                </div>
+
+                {/* Step 2: Experimental Queue */}
+                <div className="bg-sky-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">⚡</span>
+                    <h4 className="font-extrabold text-sky-900 text-xs uppercase tracking-wide">
+                      Experimental Queue
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Use the <strong className="text-slate-900">⚡ Queue</strong> tab on the left sidebar to capture lists of bookmarks, tools, videos, and articles. Rate or review them, and click <strong className="text-blue-700 font-black">Move to Workflow</strong> to instantly transform them into a live node on your whiteboard!
+                  </p>
+                </div>
+
+                {/* Step 3: Flow direction & links */}
+                <div className="bg-emerald-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2 md:col-span-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🔗</span>
+                    <h4 className="font-extrabold text-emerald-900 text-xs uppercase tracking-wide">
+                      Connecting pipelines & Smart Align
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Drag a connection from any node's output port to another's input port to define dataflow directions. Toggle the <strong className="text-purple-700">Smart Align</strong> magnet or <strong className="text-slate-800">Snap to Grid</strong> options in the canvas toolbar to keep nodes aligned and automatically prevent overlaps!
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-slate-150 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.setItem('workflow_brain_onboarding_completed', 'true');
+                  } catch (e) {}
+                  setShowOnboarding(false);
+                }}
+                className="py-2.5 px-6 bg-black hover:bg-slate-900 text-white text-xs font-mono font-black border-2 border-black rounded-lg cursor-pointer shadow-[3px_3px_0px_rgba(0,0,0,1)] hover:shadow-[4px_4px_0px_rgba(0,0,0,1)] active:translate-y-[1px] active:shadow-[2px_2px_0px_rgba(0,0,0,1)] transition-all"
+                id="start-mapping-onboarding-btn"
+              >
+                Let's Start Mapping! 🚀
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 6. HELP GUIDE MODAL */}
+      {showHelpModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-55 flex items-center justify-center p-4 animate-fade-in" id="help-modal-container">
+          <div className="bg-white border-3 border-black rounded-xl w-full max-w-2xl p-6 relative shadow-[8px_8px_0px_#000] animate-scale-up max-h-[95vh] overflow-y-auto">
+            
+            <button 
+              onClick={() => setShowHelpModal(false)}
+              className="absolute top-4 right-4 p-1 rounded-lg border-2 border-black hover:bg-slate-100 cursor-pointer shadow-[1px_1px_0px_#000] text-black"
+              id="close-help-guide-btn"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="inline-flex w-12 h-12 bg-amber-50 border-2 border-black rounded-xl items-center justify-center text-amber-600 shadow-[2px_2px_0px_#000] mb-3">
+                <HelpCircle className="w-6 h-6" />
+              </div>
+              <h2 className="text-sm font-mono font-black text-black uppercase tracking-widest">
+                Interactive Help & Reference Guide
+              </h2>
+              <span className="text-[9px] font-mono text-slate-400 font-bold uppercase block mt-1">Quick checklist to master all workspace features</span>
+            </div>
+
+            <div className="space-y-4 font-sans text-xs">
+              
+              {/* Reference Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Canvas Double Click Block */}
+                <div className="bg-amber-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🖱️</span>
+                    <h4 className="font-extrabold text-black text-xs uppercase tracking-wide">
+                      Grid Double-Click
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Double-click empty canvas grid spaces to instantly spawn a new Action Card. It will be created at your exact cursor coordinates.
+                  </p>
+                </div>
+
+                {/* Experimental Queue Block */}
+                <div className="bg-sky-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">⚡</span>
+                    <h4 className="font-extrabold text-sky-900 text-xs uppercase tracking-wide">
+                      Experimental Queue
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Store and analyze inbox links on the <strong className="text-slate-900">⚡ Queue</strong> tab. Use <strong className="text-blue-700 font-black">Move to Workflow</strong> to instantiate them as live nodes on your active workspace whiteboard canvas.
+                  </p>
+                </div>
+
+                {/* Smart Align Block */}
+                <div className="bg-purple-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🧲</span>
+                    <h4 className="font-extrabold text-purple-900 text-xs uppercase tracking-wide">
+                      Smart Alignment
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Toggle <strong className="text-purple-700 font-black">Smart Align</strong> on the canvas toolbar to enable automatic card collision avoidance and keep layouts perfectly readable. Hold Shift/Alt to temporarily disable.
+                  </p>
+                </div>
+
+                {/* Snapping Block */}
+                <div className="bg-emerald-50/55 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📐</span>
+                    <h4 className="font-extrabold text-emerald-900 text-xs uppercase tracking-wide">
+                      Snap to Grid
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Toggle <strong className="text-emerald-700 font-black">Snap</strong> in the canvas settings toolbar to force nodes to stick to our custom 24px pixel-perfect invisible layout grid.
+                  </p>
+                </div>
+
+                {/* Saves & Snapshots Block */}
+                <div className="bg-slate-50 border-2 border-black p-4 rounded-xl shadow-[3px_3px_0px_rgba(0,0,0,1)] flex flex-col gap-2 md:col-span-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">💾</span>
+                    <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wide">
+                      Snapshot Backups & Cloud Syncing
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                    Use the <strong className="text-sky-700">Saves</strong> button in the header bar to capture temporary snapshot restore pins, or download your entire workspace as a portable JSON document. Sign in with Google to enable automatic persistent cloud storage.
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-slate-150 flex justify-end gap-3 font-mono text-[10px]">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem('workflow_brain_onboarding_completed');
+                    setShowOnboarding(true);
+                  } catch (e) {}
+                  setShowHelpModal(false);
+                }}
+                className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold border border-slate-350 rounded-lg cursor-pointer animate-fade-in"
+                title="Restart the visual onboarding popup walkthrough"
+                id="reset-onboarding-walkthrough-btn"
+              >
+                🔄 Restart Onboarding
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                className="py-1.5 px-5 bg-black text-white hover:bg-slate-900 font-black border-2 border-black rounded-lg cursor-pointer shadow-[2px_2px_0px_#000]"
+                id="close-help-panel-btn"
+              >
+                Close Guide
               </button>
             </div>
 
